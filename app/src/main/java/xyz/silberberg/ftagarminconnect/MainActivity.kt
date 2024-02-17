@@ -1,5 +1,7 @@
 package xyz.silberberg.ftagarminconnect
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -28,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.app.NotificationManagerCompat
 import xyz.silberberg.ftagarminconnect.ui.theme.FTAGarminConnectTheme
 
 class MainActivity : ComponentActivity() {
@@ -36,6 +39,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val importance = NotificationManager.IMPORTANCE_LOW
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL,
+            "SignalR Notification Channel",
+            importance
+        ).apply {
+            description = "Foreground notification for SignalR connection status"
+        }
+        val notificationManager: NotificationManager =
+            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
+
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            }
+            startActivity(intent)
+        }
+
         setContent {
             FTAGarminConnectTheme {
                 // A surface container using the 'background' color from the theme
@@ -67,16 +90,20 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ConnectionUI(service: FieldMonitorConnectionService?) {
-    var url by remember { mutableStateOf("http://10.0.100.5/fieldMonitorHub") }
+    var url by remember { mutableStateOf("http://10.0.0.33/fieldMonitorHub") }
     var isValidUrl by remember { mutableStateOf(true) }
     val context = LocalContext.current
 
     val connectionState by service?.connectionState?.observeAsState(FieldConnectionState.Disconnected)
         ?: remember { mutableStateOf(FieldConnectionState.Disconnected) }
 
+    val serviceEnabled by service?.serviceEnabled?.observeAsState(false)
+        ?: remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = "Field Monitor Connection Status:")
+            Text(text = "Field Monitor Connection Status")
+            Text(text= "Service Enabled: $serviceEnabled")
             Text(
                 text = "Status: $connectionState", color = when (connectionState) {
                     FieldConnectionState.Disconnected, null -> Color.Red
@@ -93,17 +120,17 @@ fun ConnectionUI(service: FieldMonitorConnectionService?) {
                 label = { Text("SignalR Address") }
             )
             Button(onClick = {
-                if (connectionState == FieldConnectionState.Disconnected) {
-                    connectToFieldMonitor(url, context)
+                if (!serviceEnabled) {
+                    enableFieldMonitorService(url, context)
                 } else {
-                    disconnectFromFieldMonitor(context)
+                    disableFieldMonitorService(context)
                 }
             }, enabled = isValidUrl) {
                 Text(
-                    if (connectionState == FieldConnectionState.Disconnected) {
-                        "Connect"
+                    if (!serviceEnabled) {
+                        "Enable Service"
                     } else {
-                        "Disconnect"
+                        "Disable Service"
                     }
                 )
             }
@@ -111,14 +138,14 @@ fun ConnectionUI(service: FieldMonitorConnectionService?) {
     }
 }
 
-fun connectToFieldMonitor(urlString: String, context: Context) {
+fun enableFieldMonitorService(urlString: String, context: Context) {
     val intent = Intent(context, FieldMonitorConnectionService::class.java)
     intent.putExtra(FIELD_MONITOR_URI_EXTRA, urlString)
     intent.putExtra(LIFECYCLE_INTENT_EXTRA, START)
     context.startService(intent)
 }
 
-fun disconnectFromFieldMonitor(context: Context) {
+fun disableFieldMonitorService(context: Context) {
     val intent = Intent(context, FieldMonitorConnectionService::class.java)
     intent.putExtra(LIFECYCLE_INTENT_EXTRA, STOP)
     context.startService(intent)

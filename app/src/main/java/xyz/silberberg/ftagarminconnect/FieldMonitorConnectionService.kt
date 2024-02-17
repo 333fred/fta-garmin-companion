@@ -1,15 +1,16 @@
 package xyz.silberberg.ftagarminconnect
 
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PendingIntent.FLAG_IMMUTABLE
 import android.app.PendingIntent.FLAG_UPDATE_CURRENT
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
@@ -29,104 +30,143 @@ const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
 
 const val LIFECYCLE_INTENT_EXTRA = "lifecycle_intent_extra"
 const val START = 0
-const val STOP = 2
+
+const val RECONNECT = 1
+
+// Used when we're not on WiFi, but the service has been started and we want to wait until we see
+// wifi again
+const val DISCONNECT_BUT_KEEP_FOREGROUND = 2
+const val STOP = 3
 
 private const val NOTIFICATION_ID = 3
 
-private const val NOTIFICATION_CHANNEL = "signalr_connection"
+const val NOTIFICATION_CHANNEL = "signalr_connection"
 
 class FieldMonitorConnectionService : Service() {
 
     private val binder = LocalBinder()
     private var hubConnection: HubConnection? = null
     private var coroutineScope: CoroutineScope? = null
+    private var lastUrl: String? = null
+    private val lock: Any = Any()
 
-    val connectionState: MutableLiveData<FieldConnectionState> =
-        MutableLiveData(FieldConnectionState.Disconnected)
+    private var networkChangeReceiver: NetworkChangeReceiver? = null
+
+    val connectionState = MutableLiveData(FieldConnectionState.Disconnected)
+
+    val serviceEnabled = MutableLiveData(false)
 
     private val connectionStateObserver = Observer<FieldConnectionState> { state ->
         val notification = createNotification(state)
         startForeground(NOTIFICATION_ID, notification)
-        if (state == FieldConnectionState.Disconnected) {
-            stopForeground(STOP_FOREGROUND_DETACH)
-        }
     }
 
     override fun onCreate() {
         super.onCreate()
-        val importance = NotificationManager.IMPORTANCE_HIGH
-        val channel = NotificationChannel(
-            NOTIFICATION_CHANNEL,
-            "SignalR Notification Channel",
-            importance
-        ).apply {
-            description = "Foreground notification for SignalR connection status"
-        }
-        val notificationManager: NotificationManager =
-            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.createNotificationChannel(channel)
 
         connectionState.observeForever(connectionStateObserver)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.getIntExtra(LIFECYCLE_INTENT_EXTRA, -1)) {
-            START -> {}
-            STOP -> {
-                stopSelf()
-                stopConnection()
-                return START_NOT_STICKY
-            }
+        synchronized(lock) {
+            when (intent?.getIntExtra(LIFECYCLE_INTENT_EXTRA, -1)) {
+                START -> {
+                    val requestedUrl = intent.getStringExtra(FIELD_MONITOR_URI_EXTRA)
+                    if (requestedUrl == lastUrl && connectionState.value != FieldConnectionState.Disconnected) {
+                        // Someone else already started a connection to the same URL, nothing to do.
+                        return START_NOT_STICKY
+                    }
 
-            else -> {
-                Log.e("FieldMonitorConnectionService", "Invalid lifecycle intent extra")
-                return START_NOT_STICKY
+                    lastUrl = requestedUrl
+
+                    if (networkChangeReceiver == null) {
+                        networkChangeReceiver = NetworkChangeReceiver()
+                    }
+
+                    // This will immediately cause a callback with the current network settings. That will then
+                    // tell us to connect or not, depending on whether we're on WiFi or not, sending either
+                    // RECONNECT or DISCONNECT_BUT_KEEP_FOREGROUND.
+                    networkChangeReceiver!!.register()
+
+                    serviceEnabled.postValue(true)
+
+                    return START_NOT_STICKY
+                }
+
+                RECONNECT -> {
+                    val hubUrl = when (connectionState.value) {
+                        FieldConnectionState.Connecting, FieldConnectionState.Connected -> return START_NOT_STICKY
+                        else -> lastUrl!!
+                    }
+
+                    hubConnection?.stop()
+                    coroutineScope?.cancel()
+                    coroutineScope = CoroutineScope(Dispatchers.IO)
+
+                    hubConnection = HubConnectionBuilder
+                        .create(hubUrl)
+                        .withHubProtocol(MessagePackHubProtocol())
+                        .build()
+
+                    hubConnection!!.onClosed {
+                        connectionState.postValue(FieldConnectionState.Disconnected)
+                    }
+
+                    coroutineScope?.launch {
+                        val hubConnection = hubConnection
+                        if (hubConnection != null) {
+                            connectionState.postValue(FieldConnectionState.Connecting)
+                            hubConnection.start()
+                                .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
+                                .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
+                                .await()
+                        } else {
+                            connectionState.postValue(FieldConnectionState.Disconnected)
+                        }
+                    }
+
+                    return START_NOT_STICKY
+                }
+
+                DISCONNECT_BUT_KEEP_FOREGROUND -> {
+                    stopConnection(unregisterForNetworkEvents = false)
+                    return START_NOT_STICKY
+                }
+
+                STOP -> {
+                    stopSelf()
+                    stopConnection(unregisterForNetworkEvents = true)
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                    serviceEnabled.postValue(false)
+                    return START_NOT_STICKY
+                }
+
+                else -> {
+                    Log.e("FieldMonitorConnectionService", "Invalid lifecycle intent extra")
+                    return START_NOT_STICKY
+                }
             }
         }
-
-        hubConnection?.stop()
-        coroutineScope?.cancel()
-        coroutineScope = CoroutineScope(Dispatchers.IO)
-
-        val hubUrl = intent.getStringExtra(FIELD_MONITOR_URI_EXTRA)
-
-        hubConnection = HubConnectionBuilder
-            .create(hubUrl)
-            .withHubProtocol(MessagePackHubProtocol())
-            .build()
-
-        hubConnection!!.onClosed {
-            connectionState.postValue(FieldConnectionState.Disconnected)
-        }
-
-        coroutineScope?.launch {
-            val hubConnection = hubConnection
-            if (hubConnection != null) {
-                connectionState.postValue(FieldConnectionState.Connecting)
-                hubConnection.start()
-                    .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
-                    .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
-                    .await()
-            } else {
-                connectionState.postValue(FieldConnectionState.Disconnected)
-            }
-        }
-
-        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent): IBinder {
         return binder
     }
 
-    fun stopConnection() {
-        coroutineScope?.cancel()
-        coroutineScope = null
-        hubConnection?.stop()
+    private fun stopConnection(unregisterForNetworkEvents: Boolean) {
+        synchronized(lock) {
+            coroutineScope?.cancel()
+            coroutineScope = null
+            hubConnection?.stop()
+            if (unregisterForNetworkEvents) {
+                networkChangeReceiver?.unregister()
+                networkChangeReceiver = null
+            }
+        }
     }
 
     override fun onDestroy() {
-        stopConnection()
+        stopConnection(unregisterForNetworkEvents = true)
         connectionState.removeObserver(connectionStateObserver)
         super.onDestroy()
     }
@@ -176,5 +216,41 @@ class FieldMonitorConnectionService : Service() {
 
     inner class LocalBinder : Binder() {
         fun getService(): FieldMonitorConnectionService = this@FieldMonitorConnectionService
+    }
+
+    inner class NetworkChangeReceiver() {
+        private val connectivityManager =
+            this@FieldMonitorConnectionService.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val networkCapabilities = connectivityManager.getNetworkCapabilities(network)
+                val isWiFi =
+                    networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+
+                val lifeCycle = if (isWiFi) {
+                    RECONNECT
+                } else {
+                    DISCONNECT_BUT_KEEP_FOREGROUND
+                }
+                val serviceIntent = Intent(
+                    this@FieldMonitorConnectionService,
+                    FieldMonitorConnectionService::class.java
+                )
+                serviceIntent.putExtra(LIFECYCLE_INTENT_EXTRA, lifeCycle)
+                this@FieldMonitorConnectionService.startService(serviceIntent)
+            }
+        }
+
+        fun register() {
+            val networkRequest = NetworkRequest.Builder()
+                .build()
+
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+        }
+
+        fun unregister() {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        }
     }
 }

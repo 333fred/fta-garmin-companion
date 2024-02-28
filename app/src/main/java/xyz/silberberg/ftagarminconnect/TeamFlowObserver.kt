@@ -12,8 +12,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.sample
-import kotlin.time.DurationUnit
-import kotlin.time.toDuration
+import kotlin.time.Duration.Companion.milliseconds
 
 data class TeamData(val team: Int, val battery: Float, val robotStatus: Status)
 
@@ -86,9 +85,9 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
                 lowestSeen.battery
             }
             .distinctUntilChanged()
-            .sample(50.toDuration(DurationUnit.MILLISECONDS))
+            .sample(50.milliseconds)
             .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { BatteryMessage(WatchMessageSender.BATTERY_START + offset, it, false) }
+            .map { BatteryMessage(BATTERY_START + offset, it, false) }
     }
 
     val red1BatteryFlow = createBatteryFlow(red1Flow, 0)
@@ -102,9 +101,9 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
         teamFlow
             .map { it.team }
             .distinctUntilChanged()
-            .sample(50.toDuration(DurationUnit.MILLISECONDS))
+            .sample(50.milliseconds)
             .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { TeamMessage(WatchMessageSender.NUMBER_START + offset, it, false) }
+            .map { TeamMessage(NUMBER_START + offset, it, false) }
     }
 
     val red1TeamFlow = createTeamFlow(red1Flow, 0)
@@ -119,7 +118,7 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
             .map { it.robotStatus }
             .distinctUntilChanged()
             .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { StatusMessage(WatchMessageSender.STATUS_START + offset, it) }
+            .map { StatusMessage(STATUS_START + offset, it) }
     }
 
     val red1StatusFlow = createStatusFlow(red1Flow, 0)

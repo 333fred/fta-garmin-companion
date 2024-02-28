@@ -2,7 +2,6 @@ package xyz.silberberg.ftagarminconnect
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonCreator
-import com.fasterxml.jackson.annotation.JsonValue
 
 data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("p1") val alliance: AllianceType,
@@ -53,6 +52,13 @@ data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("pjk") val moveToStation: String?
 )
 
+data class MatchStatusInfo(
+    @JsonProperty("p1") val matchState: MatchStatus,
+    @JsonProperty("p2") val matchNumber: Int,
+    @JsonProperty("p3") val playNumber: Int,
+    @JsonProperty("p4") val level: Int
+)
+
 enum class AllianceType {
     None,
     Red,
@@ -61,7 +67,7 @@ enum class AllianceType {
     companion object {
         @JsonCreator
         @JvmStatic
-        fun fromValue(value: Int) =  when (value) {
+        fun fromValue(value: Int) = when (value) {
             0 -> None
             1 -> Red
             2 -> Blue
@@ -100,7 +106,7 @@ enum class MonitorStatusType {
     companion object {
         @JsonCreator
         @JvmStatic
-        fun fromValue(value: Int) = when(value) {
+        fun fromValue(value: Int) = when (value) {
             0 -> Unknown
             1 -> EStopped
             2 -> DisabledAuto
@@ -167,5 +173,44 @@ enum class DSConnectionStatusType {
                 4 -> Connected
                 else -> NotConnected
             }
+    }
+}
+
+// Younger me mapped these, and it's easier to just continue using this mapping
+enum class MatchStatus {
+    NOT_READY,
+    TIMEOUT,
+    READY_TO_PRESTART,
+    PRESTART_INITIATED,
+    PRESTART_COMPLETED,
+    MATCH_READY,
+    SENDING_TEAM_DATA,
+    AUTO,
+    TRANSITION,
+    TELEOP,
+    OVER,
+    ABORTED;
+
+    companion object {
+        @JsonCreator
+        @JvmStatic
+        fun fromValue(value: Int) = when (value) {
+            0, 1 -> OVER // No currently active event or tournament level
+            2, 3 -> READY_TO_PRESTART // WaitingForPrestart or WaitingForPrestartTO
+            4, 5 -> PRESTART_INITIATED // Prestarting or PrestartingTO
+            6, 7, 18, 19 -> PRESTART_COMPLETED // WaitingForSetAudience or WaitingForSetAudienceTO, WaitingForMatchPreview or WaitingForMatchPreviewTO
+            8 -> NOT_READY // WaitingForMatchReady
+            9 -> MATCH_READY // WaitingForMatchStart
+            10 -> SENDING_TEAM_DATA // Sending plate data to teams. This is 2018 specific
+            11 -> AUTO // Match Auto
+            12 -> TRANSITION // Match Transition
+            13 -> TELEOP // Match Teleop
+            14, // WaitingForCommit
+            15, // WaitingForPostResults
+            16 // Tournament Level Complete
+            -> OVER
+            // 17 is cancelled, treat anything else as cancelled as well
+            else -> ABORTED // Match cancelled
+        }
     }
 }

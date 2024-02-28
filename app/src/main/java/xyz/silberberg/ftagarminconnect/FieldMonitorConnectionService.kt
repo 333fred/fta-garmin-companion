@@ -22,6 +22,7 @@ import com.microsoft.signalr.HubConnectionBuilder
 import com.microsoft.signalr.messagepack.MessagePackHubProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.merge
 
 const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
 
@@ -109,6 +110,7 @@ class FieldMonitorConnectionService : Service() {
                     }
 
                     val teamFlows = registerFieldMonitorDataReceived(hubConnection!!)
+                    val matchFlow = registerMatchStatusInfoChanged(hubConnection!!)
 
                     connectionState.postValue(FieldConnectionState.Connecting)
                     hubConnection!!.start()
@@ -116,7 +118,7 @@ class FieldMonitorConnectionService : Service() {
                         .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
                         .blockingAwait()
 
-                    garminCoroutineScope = startGarminConnection(teamFlows, garminConnected, this)
+                    garminCoroutineScope = startGarminConnection(merge(teamFlows, matchFlow), garminConnected, this)
 
                     return START_NOT_STICKY
                 }

@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    kotlin("plugin.serialization") version "1.9.22"
 }
 
 android {
@@ -50,6 +51,8 @@ android {
 }
 
 dependencies {
+    implementation("org.slf4j:slf4j-api:1.7.36")
+    implementation("org.slf4j:slf4j-android:1.7.36")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
@@ -59,7 +62,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.0.3")
+    implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.0.3@aar")
     implementation("com.microsoft.signalr:signalr:8.0.0")
     implementation("com.microsoft.signalr.messagepack:signalr-messagepack:8.0.0")
     implementation("androidx.databinding:databinding-runtime:8.2.2")
@@ -72,4 +75,5 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }

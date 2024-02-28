@@ -53,9 +53,10 @@ class MainActivity : ComponentActivity() {
         notificationManager.createNotificationChannel(channel)
 
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
+            val intent =
+                Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                }
             startActivity(intent)
         }
 
@@ -100,15 +101,27 @@ fun ConnectionUI(service: FieldMonitorConnectionService?) {
     val serviceEnabled by service?.serviceEnabled?.observeAsState(false)
         ?: remember { mutableStateOf(false) }
 
+    val garminConnected by service?.garminConnected?.observeAsState(false)
+        ?: remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = "Field Monitor Connection Status")
-            Text(text= "Service Enabled: $serviceEnabled")
             Text(
-                text = "Status: $connectionState", color = when (connectionState) {
+                text = "Field Monitor Connection Status",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Text(text = "Service Enabled: $serviceEnabled")
+            Text(
+                text = "SignalR Status: $connectionState", color = when (connectionState) {
                     FieldConnectionState.Disconnected, null -> Color.Red
                     FieldConnectionState.Connecting -> Color.Yellow
                     FieldConnectionState.Connected -> Color.Green
+                }
+            )
+            Text(
+                text = "Garmin Status: $garminConnected", color = when (garminConnected) {
+                    false -> Color.Red
+                    true -> Color.Green
                 }
             )
             TextField(

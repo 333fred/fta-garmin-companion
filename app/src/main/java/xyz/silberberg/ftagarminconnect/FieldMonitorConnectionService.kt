@@ -21,10 +21,7 @@ import com.microsoft.signalr.HubConnection
 import com.microsoft.signalr.HubConnectionBuilder
 import com.microsoft.signalr.messagepack.MessagePackHubProtocol
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.rx3.await
 
 const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
 
@@ -46,14 +43,14 @@ class FieldMonitorConnectionService : Service() {
 
     private val binder = LocalBinder()
     private var hubConnection: HubConnection? = null
-    private var coroutineScope: CoroutineScope? = null
     private var lastUrl: String? = null
     private val lock: Any = Any()
+    private var garminCoroutineScope: CoroutineScope? = null
 
     private var networkChangeReceiver: NetworkChangeReceiver? = null
 
     val connectionState = MutableLiveData(FieldConnectionState.Disconnected)
-
+    val garminConnected = MutableLiveData(false)
     val serviceEnabled = MutableLiveData(false)
 
     private val connectionStateObserver = Observer<FieldConnectionState> { state ->
@@ -68,6 +65,7 @@ class FieldMonitorConnectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
         synchronized(lock) {
             when (intent?.getIntExtra(LIFECYCLE_INTENT_EXTRA, -1)) {
                 START -> {
@@ -100,8 +98,6 @@ class FieldMonitorConnectionService : Service() {
                     }
 
                     hubConnection?.stop()
-                    coroutineScope?.cancel()
-                    coroutineScope = CoroutineScope(Dispatchers.IO)
 
                     hubConnection = HubConnectionBuilder
                         .create(hubUrl)
@@ -112,18 +108,15 @@ class FieldMonitorConnectionService : Service() {
                         connectionState.postValue(FieldConnectionState.Disconnected)
                     }
 
-                    coroutineScope?.launch {
-                        val hubConnection = hubConnection
-                        if (hubConnection != null) {
-                            connectionState.postValue(FieldConnectionState.Connecting)
-                            hubConnection.start()
-                                .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
-                                .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
-                                .await()
-                        } else {
-                            connectionState.postValue(FieldConnectionState.Disconnected)
-                        }
-                    }
+                    val teamFlows = registerFieldMonitorDataReceived(hubConnection!!)
+
+                    connectionState.postValue(FieldConnectionState.Connecting)
+                    hubConnection!!.start()
+                        .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
+                        .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
+                        .blockingAwait()
+
+                    garminCoroutineScope = startGarminConnection(null, garminConnected, this)
 
                     return START_NOT_STICKY
                 }
@@ -155,8 +148,6 @@ class FieldMonitorConnectionService : Service() {
 
     private fun stopConnection(unregisterForNetworkEvents: Boolean) {
         synchronized(lock) {
-            coroutineScope?.cancel()
-            coroutineScope = null
             hubConnection?.stop()
             if (unregisterForNetworkEvents) {
                 networkChangeReceiver?.unregister()
@@ -168,6 +159,8 @@ class FieldMonitorConnectionService : Service() {
     override fun onDestroy() {
         stopConnection(unregisterForNetworkEvents = true)
         connectionState.removeObserver(connectionStateObserver)
+        garminCoroutineScope?.cancel()
+        garminCoroutineScope = null
         super.onDestroy()
     }
 
@@ -212,6 +205,10 @@ class FieldMonitorConnectionService : Service() {
         }
 
         return builder.build()
+    }
+
+    private fun onFieldMonitorDataReceived(data: FieldMonitorData) {
+        // Do something with the data
     }
 
     inner class LocalBinder : Binder() {

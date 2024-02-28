@@ -1,6 +1,6 @@
 package xyz.silberberg.ftagarminconnect
 
-enum class Status(val value: Byte) {
+enum class Status(val value: Int) {
     ETH(0),
     DS(1),
     RADIO(2),
@@ -18,7 +18,7 @@ const val NUMBER_START = 9
 const val BATTERY_START = 15
 const val MATCH_STATE = 21
 
-abstract class Message() {
+abstract class Message {
     abstract val key: Int
 }
 

@@ -7,6 +7,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.MutableLiveData
 import com.garmin.android.connectiq.ConnectIQ
+import com.garmin.android.connectiq.ConnectIQ.IQConnectType
 import com.garmin.android.connectiq.ConnectIQ.IQDeviceEventListener
 import com.garmin.android.connectiq.IQApp
 import com.garmin.android.connectiq.IQDevice
@@ -30,18 +31,21 @@ private data class AppContext(val connectIQ: ConnectIQ, val device: IQDevice, va
 fun startGarminConnection(
     messageChannel: Flow<Message>,
     connectionState: MutableLiveData<Boolean>,
-    context: Context
+    context: Context,
+    useAdb: Boolean
 ): CoroutineScope {
     val scope = CoroutineScope(Dispatchers.IO)
     scope.launch {
         try {
-            val garminContext = connectAndStartGarmin(connectionState, context) ?: return@launch
+            val garminContext =
+                connectAndStartGarmin(connectionState, context, useAdb) ?: return@launch
 
             waitAndSendMessages(
                 garminContext.connectIQ,
                 garminContext.device,
                 garminContext.app,
-                messageChannel
+                messageChannel,
+                useAdb
             )
         } finally {
 //            connectionState.postValue(false)
@@ -53,10 +57,15 @@ fun startGarminConnection(
 
 private suspend fun connectAndStartGarmin(
     connectionState: MutableLiveData<Boolean>,
-    context: Context
+    context: Context,
+    useAdb: Boolean
 ): AppContext? {
     Log.d(TAG, "ConnectIQ Init started")
-    val communicationStrategy = ConnectIQ.IQConnectType.WIRELESS
+    val communicationStrategy = if (useAdb) {
+        IQConnectType.TETHERED
+    } else {
+        IQConnectType.WIRELESS
+    }
     val connectIQ = ConnectIQ.getInstance(context, communicationStrategy)
 
     withContext(Dispatchers.Main) {
@@ -100,6 +109,8 @@ private suspend fun connectAndStartGarmin(
 
     var device: IQDevice? = null
 
+    var temp = 0
+
     for (knownDevice in knownDevices) {
         device = withContext(Dispatchers.Main) {
             suspendCancellableCoroutine {
@@ -116,9 +127,9 @@ private suspend fun connectAndStartGarmin(
 
                         Log.d(TAG, "Device ${device.friendlyName} status changed to $status")
                         if (status == IQDevice.IQDeviceStatus.CONNECTED) {
-                            it.resume(device, null)
-                        } else {
-                            it.resume(null, null)
+                            if (temp == 0) {
+                                it.resume(device, null)
+                            }
                         }
                     }
                 })
@@ -189,7 +200,8 @@ private suspend fun waitAndSendMessages(
     connectIQ: ConnectIQ,
     device: IQDevice,
     app: IQApp,
-    messageChannel: Flow<Message>
+    messageChannel: Flow<Message>,
+    useAdb: Boolean
 ) {
     messageChannel.timedChunk(50.milliseconds).collect { messages ->
         val dedupedMessages = messages.associateBy { it.key }
@@ -201,16 +213,16 @@ private suspend fun waitAndSendMessages(
             when (message) {
                 is TeamMessage -> {
                     shouldVibrate = shouldVibrate || message.shouldVibrate
-                    map[message.key] = message.teamMessage as Any
+                    map[message.key] = message.teamMessage
                 }
 
                 is BatteryMessage -> {
                     shouldVibrate = shouldVibrate || message.shouldVibrate
-                    map[message.key] = message.battery as Any
+                    map[message.key] = message.battery
                 }
 
                 is StatusMessage -> {
-                    map[message.key] = message.status
+                    map[message.key] = message.status.value
                 }
 
                 is MatchMessage -> {
@@ -225,7 +237,7 @@ private suspend fun waitAndSendMessages(
             map[VIBE] = true
         }
 
-        sendMessages(connectIQ, device, app, map)
+        sendMessages(connectIQ, device, app, map, useAdb)
     }
 }
 
@@ -233,9 +245,10 @@ private suspend fun sendMessages(
     connectIQ: ConnectIQ,
     device: IQDevice,
     app: IQApp,
-    messages: Map<Int, Any>
+    messages: Map<Int, Any>,
+    useAdb: Boolean
 ) {
-    suspend fun trySend() = withContext(Dispatchers.Main) {
+    suspend fun trySend() =
         suspendCancellableCoroutine {
             connectIQ.sendMessage(
                 device,
@@ -246,13 +259,18 @@ private suspend fun sendMessages(
                     ConnectIQ.IQMessageStatus.SUCCESS -> it.resume(true, null)
                     ConnectIQ.IQMessageStatus.FAILURE_DURING_TRANSFER -> it.resume(false, null)
                     else -> {
+                        if (status == ConnectIQ.IQMessageStatus.FAILURE_UNKNOWN && useAdb) {
+                            // There's some quirk with the simulator returning SUCCESS then unknown failure
+                            // https://forums.garmin.com/forum/developers/connect-iq/1265763-questions-regarding-communications-api-and-transmit
+                            // Do nothing
+                            return@sendMessage
+                        }
                         Log.e(TAG, "Failed to send message with status $status")
                         it.cancel()
                     }
                 }
             }
         }
-    }
 
     for (i in 0 until 3) {
         val sendSucceeded = trySend()

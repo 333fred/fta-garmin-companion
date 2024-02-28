@@ -118,7 +118,7 @@ class FieldMonitorConnectionService : Service() {
                         .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
                         .blockingAwait()
 
-                    garminCoroutineScope = startGarminConnection(merge(teamFlows, matchFlow), garminConnected, this)
+                    garminCoroutineScope = startGarminConnection(merge(teamFlows, matchFlow), garminConnected, this, useAdb = false)
 
                     return START_NOT_STICKY
                 }

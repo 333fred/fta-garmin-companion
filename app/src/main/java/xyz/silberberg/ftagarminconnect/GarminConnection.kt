@@ -13,24 +13,36 @@ import com.garmin.android.connectiq.IQDevice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val TAG = "GarminConnection"
 private val SupportedDevices = listOf("vivoactive HR", "Simulator", "vívoactive 3", "fenix 7")
 private const val AppId = "fc4cdb94-9339-44e4-ad86-2d235312f0e7"
+private const val VIBE = 7
+
+private data class AppContext(val connectIQ: ConnectIQ, val device: IQDevice, val app: IQApp)
 
 fun startGarminConnection(
-    messageChannel: Channel<Message>?,
+    messageChannel: Flow<Message>,
     connectionState: MutableLiveData<Boolean>,
     context: Context
 ): CoroutineScope {
     val scope = CoroutineScope(Dispatchers.IO)
     scope.launch {
         try {
-            connectAndStartGarmin(connectionState, context)
+            val garminContext = connectAndStartGarmin(connectionState, context) ?: return@launch
+
+            waitAndSendMessages(
+                garminContext.connectIQ,
+                garminContext.device,
+                garminContext.app,
+                messageChannel
+            )
         } finally {
 //            connectionState.postValue(false)
         }
@@ -42,7 +54,7 @@ fun startGarminConnection(
 private suspend fun connectAndStartGarmin(
     connectionState: MutableLiveData<Boolean>,
     context: Context
-) {
+): AppContext? {
     Log.d(TAG, "ConnectIQ Init started")
     val communicationStrategy = ConnectIQ.IQConnectType.WIRELESS
     val connectIQ = ConnectIQ.getInstance(context, communicationStrategy)
@@ -83,7 +95,7 @@ private suspend fun connectAndStartGarmin(
             Toast.makeText(context, "No Supported Garmin Device Connected", Toast.LENGTH_LONG)
                 .show()
         }
-        return
+        return null
     }
 
     var device: IQDevice? = null
@@ -121,7 +133,7 @@ private suspend fun connectAndStartGarmin(
     if (device == null) {
         Log.e(TAG, "Could not register for any device events")
         connectionState.postValue(false)
-        return
+        return null
     }
 
     Log.d(TAG, "Getting application info")
@@ -162,11 +174,101 @@ private suspend fun connectAndStartGarmin(
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "App is not installed!", Toast.LENGTH_LONG).show()
         }
-        return
+        return null
     }
 
     Log.d(TAG, "App is installed!")
     withContext(Dispatchers.Main) {
         connectionState.postValue(true)
+    }
+
+    return AppContext(connectIQ, device, app)
+}
+
+private suspend fun waitAndSendMessages(
+    connectIQ: ConnectIQ,
+    device: IQDevice,
+    app: IQApp,
+    messageChannel: Flow<Message>
+) {
+    messageChannel.timedChunk(50.milliseconds).collect { messages ->
+        val dedupedMessages = messages.associateBy { it.key }
+
+        val map = HashMap<Int, Any>()
+        var shouldVibrate = false
+        for (messagePair in dedupedMessages) {
+            val message = messagePair.value
+            when (message) {
+                is TeamMessage -> {
+                    shouldVibrate = shouldVibrate || message.shouldVibrate
+                    map[message.key] = message.teamMessage as Any
+                }
+
+                is BatteryMessage -> {
+                    shouldVibrate = shouldVibrate || message.shouldVibrate
+                    map[message.key] = message.battery as Any
+                }
+
+                is StatusMessage -> {
+                    map[message.key] = message.status
+                }
+
+                is MatchMessage -> {
+                    map[message.key] = message.matchState
+                }
+
+                else -> throw IllegalArgumentException("Unexpected value $message")
+            }
+        }
+
+        if (shouldVibrate) {
+            map[VIBE] = true
+        }
+
+        sendMessages(connectIQ, device, app, map)
+    }
+}
+
+private suspend fun sendMessages(
+    connectIQ: ConnectIQ,
+    device: IQDevice,
+    app: IQApp,
+    messages: Map<Int, Any>
+) {
+    suspend fun trySend() = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine {
+            connectIQ.sendMessage(
+                device,
+                app,
+                messages
+            ) { _, _, status ->
+                when (status) {
+                    ConnectIQ.IQMessageStatus.SUCCESS -> it.resume(true, null)
+                    ConnectIQ.IQMessageStatus.FAILURE_DURING_TRANSFER -> it.resume(false, null)
+                    else -> {
+                        Log.e(TAG, "Failed to send message with status $status")
+                        it.cancel()
+                    }
+                }
+            }
+        }
+    }
+
+    for (i in 0 until 3) {
+        val sendSucceeded = trySend()
+
+        if (sendSucceeded) {
+            return
+        }
+
+        val delayAmount = ((i + 1) * 10).milliseconds
+        Log.e(TAG, "Failed to send messages, retrying in $delayAmount")
+        delay(delayAmount)
+    }
+
+    val sendSucceeded = trySend()
+
+    if (!sendSucceeded) {
+        Log.e(TAG, "Failed to send messages")
     }
 }

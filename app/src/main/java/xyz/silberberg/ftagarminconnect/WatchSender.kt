@@ -5,7 +5,9 @@ import android.util.Log
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.HashMap
 
-abstract class Message
+abstract class Message() {
+    abstract val key: Int
+}
 
 enum class Status(val value: Byte) {
     ETH(0),
@@ -20,10 +22,10 @@ enum class Status(val value: Byte) {
     BAT(9)
 }
 
-data class StatusMessage(val key: Int, val status: Status) : Message()
-data class BatteryMessage(val key: Int, val battery: Float, val shouldVibrate: Boolean) : Message()
-data class TeamMessage(val key: Int, val teamMessage: Int, val shouldVibrate: Boolean) : Message()
-data class MatchMessage(val key: Int, val matchState: Int) : Message()
+data class StatusMessage(override val key: Int, val status: Status) : Message()
+data class BatteryMessage(override val key: Int, val battery: Float, val shouldVibrate: Boolean) : Message()
+data class TeamMessage(override val key: Int, val teamMessage: Int, val shouldVibrate: Boolean) : Message()
+data class MatchMessage(override val key: Int, val matchState: Int) : Message()
 interface WatchMessageSender : Runnable {
     fun startApp()
     fun addMessage(key: Int, message: Message)

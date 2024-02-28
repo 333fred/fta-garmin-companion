@@ -116,7 +116,7 @@ class FieldMonitorConnectionService : Service() {
                         .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
                         .blockingAwait()
 
-                    garminCoroutineScope = startGarminConnection(null, garminConnected, this)
+                    garminCoroutineScope = startGarminConnection(teamFlows, garminConnected, this)
 
                     return START_NOT_STICKY
                 }
@@ -149,6 +149,8 @@ class FieldMonitorConnectionService : Service() {
     private fun stopConnection(unregisterForNetworkEvents: Boolean) {
         synchronized(lock) {
             hubConnection?.stop()
+            garminCoroutineScope?.cancel()
+            garminCoroutineScope = null
             if (unregisterForNetworkEvents) {
                 networkChangeReceiver?.unregister()
                 networkChangeReceiver = null
@@ -159,8 +161,6 @@ class FieldMonitorConnectionService : Service() {
     override fun onDestroy() {
         stopConnection(unregisterForNetworkEvents = true)
         connectionState.removeObserver(connectionStateObserver)
-        garminCoroutineScope?.cancel()
-        garminCoroutineScope = null
         super.onDestroy()
     }
 
@@ -205,10 +205,6 @@ class FieldMonitorConnectionService : Service() {
         }
 
         return builder.build()
-    }
-
-    private fun onFieldMonitorDataReceived(data: FieldMonitorData) {
-        // Do something with the data
     }
 
     inner class LocalBinder : Binder() {

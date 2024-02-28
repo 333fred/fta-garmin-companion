@@ -18,7 +18,7 @@ data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("pc") val isEStopPressed: Boolean,
     @JsonProperty("pd") val isEStopped: Boolean,
     @JsonProperty("pe") val battery: Double,
-    @JsonProperty("pf") val monitorStatus: Int,
+    @JsonProperty("pf") val monitorStatus: MonitorStatusType,
     @JsonProperty("pg") val averageTripTime: Byte,
     @JsonProperty("ph") val lostPackets: Int,
     @JsonProperty("pi") val signal: Int?,

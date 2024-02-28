@@ -109,8 +109,6 @@ private suspend fun connectAndStartGarmin(
 
     var device: IQDevice? = null
 
-    var temp = 0
-
     for (knownDevice in knownDevices) {
         device = withContext(Dispatchers.Main) {
             suspendCancellableCoroutine {
@@ -127,9 +125,7 @@ private suspend fun connectAndStartGarmin(
 
                         Log.d(TAG, "Device ${device.friendlyName} status changed to $status")
                         if (status == IQDevice.IQDeviceStatus.CONNECTED) {
-                            if (temp == 0) {
-                                it.resume(device, null)
-                            }
+                            it.resume(device, null)
                         }
                     }
                 })

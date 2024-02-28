@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.map
 
 fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<Message> {
-    var matchStateFlow = MutableStateFlow(MatchStatus.NOT_READY)
+    val matchStateFlow = MutableStateFlow(MatchStatus.NOT_READY)
 
     hubConnection.on("MatchStatusInfoChanged", {
         matchStateFlow.value = it.matchState

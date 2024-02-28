@@ -8,16 +8,27 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.sample
 import kotlin.time.Duration.Companion.milliseconds
 
 data class TeamData(val team: Int, val battery: Float, val robotStatus: Status)
 
+private enum class BatteryResetStatus {
+    DO_RESET,
+    HAS_RESET_THIS_MATCH,
+    NO_RESET_THIS_MATCH
+}
+
 @OptIn(FlowPreview::class)
-fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message> {
+fun registerFieldMonitorDataReceived(
+    hubConnection: HubConnection,
+    matchStatusFlow: Flow<MatchStatus>
+): Flow<Message> {
     val red1Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
     val red2Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
     val red3Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
@@ -72,14 +83,30 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
         }
     }, Array<FieldMonitorData>::class.java)
 
+    val resetBatteryFlow =
+        matchStatusFlow.runningFold(BatteryResetStatus.NO_RESET_THIS_MATCH) { acc, matchStatus ->
+            when (matchStatus) {
+                MatchStatus.AUTO -> when (acc) {
+                    BatteryResetStatus.DO_RESET -> BatteryResetStatus.HAS_RESET_THIS_MATCH
+                    BatteryResetStatus.NO_RESET_THIS_MATCH -> BatteryResetStatus.DO_RESET
+                    else -> acc
+                }
+
+                MatchStatus.PRESTART_INITIATED -> BatteryResetStatus.NO_RESET_THIS_MATCH
+                else -> acc
+            }
+        }
+
     val createBatteryFlow: (StateFlow<TeamData>, Int) -> Flow<Message> = { teamFlow, offset ->
         var lowestSeen = TeamData(0, 0f, Status.ETH)
         teamFlow
-            .map {
-                if (it.team != lowestSeen.team) {
-                    lowestSeen = it
-                } else if (it.battery < lowestSeen.battery) {
-                    lowestSeen = it
+            .combine(resetBatteryFlow)
+            { teamData, resetBatteryStatus ->
+                if (teamData.team != lowestSeen.team
+                    || resetBatteryStatus == BatteryResetStatus.DO_RESET
+                    || (teamData.battery < lowestSeen.battery && teamData.battery != 0f)
+                ) {
+                    lowestSeen = teamData
                 }
 
                 lowestSeen.battery
@@ -87,7 +114,7 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
             .distinctUntilChanged()
             .sample(50.milliseconds)
             .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { BatteryMessage(BATTERY_START + offset, it, false) }
+            .map { BatteryMessage(BATTERY_START + offset, it) }
     }
 
     val red1BatteryFlow = createBatteryFlow(red1Flow, 0)
@@ -113,12 +140,26 @@ fun registerFieldMonitorDataReceived(hubConnection: HubConnection): Flow<Message
     val blue2TeamFlow = createTeamFlow(blue2Flow, 4)
     val blue3TeamFlow = createTeamFlow(blue3Flow, 5)
 
+    val shouldVibrateFlow = matchStatusFlow.map {
+        when (it) {
+            // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
+            MatchStatus.NOT_READY, MatchStatus.MATCH_READY, MatchStatus.SENDING_TEAM_DATA,
+            MatchStatus.AUTO, MatchStatus.TRANSITION, MatchStatus.TELEOP -> true
+
+            MatchStatus.TIMEOUT, MatchStatus.READY_TO_PRESTART,
+            MatchStatus.PRESTART_INITIATED, MatchStatus.PRESTART_COMPLETED,
+            MatchStatus.OVER, MatchStatus.ABORTED -> false
+        }
+    }
+
     val createStatusFlow: (StateFlow<TeamData>, Int) -> Flow<Message> = { teamFlow, offset ->
         teamFlow
             .map { it.robotStatus }
             .distinctUntilChanged()
             .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { StatusMessage(STATUS_START + offset, it) }
+            .combine(shouldVibrateFlow) { status, inMatch ->
+                TeamMessage(STATUS_START + offset, status.value, shouldVibrate = inMatch)
+            }
     }
 
     val red1StatusFlow = createStatusFlow(red1Flow, 0)

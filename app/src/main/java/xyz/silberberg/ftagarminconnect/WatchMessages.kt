@@ -22,7 +22,6 @@ abstract class Message {
     abstract val key: Int
 }
 
-data class StatusMessage(override val key: Int, val status: Status) : Message()
-data class BatteryMessage(override val key: Int, val battery: Float, val shouldVibrate: Boolean) : Message()
+data class BatteryMessage(override val key: Int, val battery: Float) : Message()
 data class TeamMessage(override val key: Int, val teamMessage: Int, val shouldVibrate: Boolean) : Message()
 data class MatchMessage(override val key: Int, val matchState: Int) : Message()

@@ -213,12 +213,7 @@ private suspend fun waitAndSendMessages(
                 }
 
                 is BatteryMessage -> {
-                    shouldVibrate = shouldVibrate || message.shouldVibrate
                     map[message.key] = message.battery
-                }
-
-                is StatusMessage -> {
-                    map[message.key] = message.status.value
                 }
 
                 is MatchMessage -> {

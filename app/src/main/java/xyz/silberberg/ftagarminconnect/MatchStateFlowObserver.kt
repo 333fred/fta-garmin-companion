@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.map
 
-fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<Message> {
+fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<MatchStatus> {
     val matchStateFlow = MutableStateFlow(MatchStatus.NOT_READY)
 
     hubConnection.on("MatchStatusInfoChanged", {
@@ -16,5 +16,10 @@ fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<Message> 
 
     return matchStateFlow
         .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-        .map { MatchMessage(MATCH_STATE, it.ordinal) }
+}
+
+fun transformToMessage(matchStatusFlow: Flow<MatchStatus>): Flow<Message> {
+    return matchStatusFlow.map {
+        MatchMessage(MATCH_STATE, it.ordinal)
+    }
 }

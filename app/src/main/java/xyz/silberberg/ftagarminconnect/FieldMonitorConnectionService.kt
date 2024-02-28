@@ -109,8 +109,8 @@ class FieldMonitorConnectionService : Service() {
                         connectionState.postValue(FieldConnectionState.Disconnected)
                     }
 
-                    val teamFlows = registerFieldMonitorDataReceived(hubConnection!!)
                     val matchFlow = registerMatchStatusInfoChanged(hubConnection!!)
+                    val teamFlows = registerFieldMonitorDataReceived(hubConnection!!, matchFlow)
 
                     connectionState.postValue(FieldConnectionState.Connecting)
                     hubConnection!!.start()
@@ -118,7 +118,7 @@ class FieldMonitorConnectionService : Service() {
                         .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
                         .blockingAwait()
 
-                    garminCoroutineScope = startGarminConnection(merge(teamFlows, matchFlow), garminConnected, this, useAdb = false)
+                    garminCoroutineScope = startGarminConnection(merge(teamFlows, transformToMessage(matchFlow)), garminConnected, this, useAdb = false)
 
                     return START_NOT_STICKY
                 }

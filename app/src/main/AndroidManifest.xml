@@ -24,6 +24,10 @@
             android:foregroundServiceType="specialUse"
             android:value="Uses a foreground service to maintain an active SignalR connection while matches are ongoing" />
 
+        <service
+            android:name=".GarminService"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

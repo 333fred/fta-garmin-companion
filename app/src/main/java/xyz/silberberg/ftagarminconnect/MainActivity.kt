@@ -34,7 +34,8 @@ import androidx.core.app.NotificationManagerCompat
 import xyz.silberberg.ftagarminconnect.ui.theme.FTAGarminConnectTheme
 
 class MainActivity : ComponentActivity() {
-    private var service by mutableStateOf<FieldMonitorConnectionService?>(null)
+    private var fieldMonitorConnectionService by mutableStateOf<FieldMonitorConnectionService?>(null)
+    private var garminService by mutableStateOf<GarminService?>(null)
     private var serviceConnection: ServiceConnection? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,41 +68,59 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ConnectionUI(service)
+                    ConnectionUI(fieldMonitorConnectionService, garminService)
                 }
             }
         }
 
         serviceConnection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                val localBinder = binder as FieldMonitorConnectionService.LocalBinder
-                service = localBinder.getService()
+                val localBinder = binder as LocalBinder
+                when (localBinder.service) {
+                    is FieldMonitorConnectionService -> {
+                        fieldMonitorConnectionService = localBinder.service
+                    }
+
+                    is GarminService -> {
+                        garminService = localBinder.service
+                    }
+                }
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
-                service = null
+                fieldMonitorConnectionService = null
             }
         }
 
         Intent(this, FieldMonitorConnectionService::class.java).also { intent ->
             bindService(intent, serviceConnection!!, Context.BIND_AUTO_CREATE)
         }
+
+        Intent(this, GarminService::class.java).also { intent ->
+            bindService(intent, serviceConnection!!, Context.BIND_AUTO_CREATE)
+            startService(intent)
+        }
     }
 }
 
 @Composable
-fun ConnectionUI(service: FieldMonitorConnectionService?) {
-    var url by remember { mutableStateOf("http://10.0.0.33/fieldMonitorHub") }
+fun ConnectionUI(
+    fieldMonitorConnectionService: FieldMonitorConnectionService?,
+    garminService: GarminService?
+) {
+    var url by remember { mutableStateOf("http://10.0.100.5/fieldMonitorHub") }
     var isValidUrl by remember { mutableStateOf(true) }
     val context = LocalContext.current
 
-    val connectionState by service?.connectionState?.observeAsState(FieldConnectionState.Disconnected)
+    val connectionState by fieldMonitorConnectionService?.connectionState?.observeAsState(
+        FieldConnectionState.Disconnected
+    )
         ?: remember { mutableStateOf(FieldConnectionState.Disconnected) }
 
-    val serviceEnabled by service?.serviceEnabled?.observeAsState(false)
+    val serviceEnabled by fieldMonitorConnectionService?.serviceEnabled?.observeAsState(false)
         ?: remember { mutableStateOf(false) }
 
-    val garminConnected by service?.garminConnected?.observeAsState(false)
+    val garminConnected by garminService?.connectionState?.observeAsState(false)
         ?: remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

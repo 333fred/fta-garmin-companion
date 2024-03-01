@@ -5,13 +5,14 @@ import android.app.PendingIntent
 import android.app.PendingIntent.FLAG_IMMUTABLE
 import android.app.PendingIntent.FLAG_UPDATE_CURRENT
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -19,10 +20,13 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
 import com.microsoft.signalr.HubConnection
 import com.microsoft.signalr.HubConnectionBuilder
+import com.microsoft.signalr.HubConnectionState
 import com.microsoft.signalr.messagepack.MessagePackHubProtocol
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
 
 const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
 
@@ -42,21 +46,38 @@ const val NOTIFICATION_CHANNEL = "signalr_connection"
 
 class FieldMonitorConnectionService : Service() {
 
-    private val binder = LocalBinder()
+    private val binder = LocalBinder(this)
     private var hubConnection: HubConnection? = null
     private var lastUrl: String? = null
     private val lock: Any = Any()
-    private var garminCoroutineScope: CoroutineScope? = null
+    private var test = false
 
     private var networkChangeReceiver: NetworkChangeReceiver? = null
+    private var garminServiceConnection: ServiceConnection? = null
+    private var garminService: GarminService? = null
+    private var sendCoroutineScope: CoroutineScope? = null
 
     val connectionState = MutableLiveData(FieldConnectionState.Disconnected)
-    val garminConnected = MutableLiveData(false)
     val serviceEnabled = MutableLiveData(false)
 
     private val connectionStateObserver = Observer<FieldConnectionState> { state ->
         val notification = createNotification(state)
         startForeground(NOTIFICATION_ID, notification)
+
+        garminServiceConnection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val binder = service as LocalBinder
+                garminService = binder.service as GarminService
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                garminService = null
+            }
+        }
+
+        Intent(this, GarminService::class.java).also { intent ->
+            bindService(intent, garminServiceConnection!!, Context.BIND_AUTO_CREATE)
+        }
     }
 
     override fun onCreate() {
@@ -66,17 +87,22 @@ class FieldMonitorConnectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-
         synchronized(lock) {
             when (intent?.getIntExtra(LIFECYCLE_INTENT_EXTRA, -1)) {
                 START -> {
+                    test = true
                     val requestedUrl = intent.getStringExtra(FIELD_MONITOR_URI_EXTRA)
                     if (requestedUrl == lastUrl && connectionState.value != FieldConnectionState.Disconnected) {
                         // Someone else already started a connection to the same URL, nothing to do.
                         return START_NOT_STICKY
                     }
 
-                    lastUrl = requestedUrl
+                    lastUrl = if (requestedUrl == null) {
+                        Log.e("FieldMonitorConnectionService", "No URL provided to connect to")
+                        return START_NOT_STICKY
+                    } else {
+                        requestedUrl
+                    }
 
                     if (networkChangeReceiver == null) {
                         networkChangeReceiver = NetworkChangeReceiver()
@@ -95,7 +121,11 @@ class FieldMonitorConnectionService : Service() {
                 RECONNECT -> {
                     val hubUrl = when (connectionState.value) {
                         FieldConnectionState.Connecting, FieldConnectionState.Connected -> return START_NOT_STICKY
-                        else -> lastUrl!!
+                        else -> {
+                            Log.d("FieldMonitorConnectionService", "Reconnecting to $lastUrl")
+                            Log.d("FieldMonitorConnectionService", "Test: $test")
+                            lastUrl!!
+                        }
                     }
 
                     hubConnection?.stop()
@@ -113,12 +143,35 @@ class FieldMonitorConnectionService : Service() {
                     val teamFlows = registerFieldMonitorDataReceived(hubConnection!!, matchFlow)
 
                     connectionState.postValue(FieldConnectionState.Connecting)
-                    hubConnection!!.start()
-                        .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
-                        .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
-                        .blockingAwait()
 
-                    garminCoroutineScope = startGarminConnection(merge(teamFlows, transformToMessage(matchFlow)), garminConnected, this, useAdb = false)
+                    for (i in 0..5) {
+                        try {
+                            hubConnection!!.start()
+                                .doOnComplete { connectionState.postValue(FieldConnectionState.Connected) }
+                                .doOnError { connectionState.postValue(FieldConnectionState.Disconnected) }
+                                .blockingAwait()
+                            break
+                        } catch (e: Exception) {
+                            Log.w(
+                                "FieldMonitorConnectionService",
+                                "Received exception from signalr, retrying in 1 second"
+                            )
+                            Thread.sleep(1000)
+                        }
+                    }
+
+                    if (hubConnection!!.connectionState != HubConnectionState.CONNECTED) {
+                        Log.e("FieldMonitorConnectionService", "Failed to connect to signalr")
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+
+                    sendCoroutineScope = CoroutineScope(Dispatchers.Default)
+                    sendCoroutineScope!!.launch {
+                        merge(teamFlows, transformToMessage(matchFlow)).collect {
+                            garminService?.messageChannel?.send(it)
+                        }
+                    }
 
                     return START_NOT_STICKY
                 }
@@ -144,15 +197,13 @@ class FieldMonitorConnectionService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent): IBinder {
-        return binder
-    }
+    override fun onBind(intent: Intent): IBinder = binder
 
     private fun stopConnection(unregisterForNetworkEvents: Boolean) {
         synchronized(lock) {
             hubConnection?.stop()
-            garminCoroutineScope?.cancel()
-            garminCoroutineScope = null
+            sendCoroutineScope?.cancel()
+            sendCoroutineScope = null
             if (unregisterForNetworkEvents) {
                 networkChangeReceiver?.unregister()
                 networkChangeReceiver = null
@@ -209,25 +260,20 @@ class FieldMonitorConnectionService : Service() {
         return builder.build()
     }
 
-    inner class LocalBinder : Binder() {
-        fun getService(): FieldMonitorConnectionService = this@FieldMonitorConnectionService
-    }
-
     inner class NetworkChangeReceiver() {
         private val connectivityManager =
             this@FieldMonitorConnectionService.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         private val networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val networkCapabilities = connectivityManager.getNetworkCapabilities(network)
-                val isWiFi =
-                    networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+                sendIntent(RECONNECT)
+            }
 
-                val lifeCycle = if (isWiFi) {
-                    RECONNECT
-                } else {
-                    DISCONNECT_BUT_KEEP_FOREGROUND
-                }
+            override fun onLost(network: Network) {
+                sendIntent(DISCONNECT_BUT_KEEP_FOREGROUND)
+            }
+
+            private fun sendIntent(lifeCycle: Int) {
                 val serviceIntent = Intent(
                     this@FieldMonitorConnectionService,
                     FieldMonitorConnectionService::class.java
@@ -239,6 +285,7 @@ class FieldMonitorConnectionService : Service() {
 
         fun register() {
             val networkRequest = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .build()
 
             connectivityManager.registerNetworkCallback(networkRequest, networkCallback)

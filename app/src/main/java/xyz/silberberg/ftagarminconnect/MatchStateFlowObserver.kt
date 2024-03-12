@@ -1,13 +1,15 @@
 package xyz.silberberg.ftagarminconnect
 
 import com.microsoft.signalr.HubConnection
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 
-fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<MatchStatus> {
+fun registerMatchStatusInfoChanged(hubConnection: HubConnection, observerScope: CoroutineScope): SharedFlow<MatchStatus> {
     val matchStateFlow = MutableStateFlow(MatchStatus.NOT_READY)
 
     hubConnection.on("MatchStatusInfoChanged", {
@@ -16,10 +18,5 @@ fun registerMatchStatusInfoChanged(hubConnection: HubConnection): Flow<MatchStat
 
     return matchStateFlow
         .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-}
-
-fun transformToMessage(matchStatusFlow: Flow<MatchStatus>): Flow<Message> {
-    return matchStatusFlow.map {
-        MatchMessage(MATCH_STATE, it.ordinal)
-    }
+        .shareIn(observerScope, SharingStarted.Lazily, replay = 1)
 }

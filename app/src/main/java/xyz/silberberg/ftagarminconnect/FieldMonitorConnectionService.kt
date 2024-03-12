@@ -25,7 +25,7 @@ import com.microsoft.signalr.messagepack.MessagePackHubProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
 
 const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
@@ -50,12 +50,12 @@ class FieldMonitorConnectionService : Service() {
     private var hubConnection: HubConnection? = null
     private var lastUrl: String? = null
     private val lock: Any = Any()
-    private var test = false
 
     private var networkChangeReceiver: NetworkChangeReceiver? = null
     private var garminServiceConnection: ServiceConnection? = null
     private var garminService: GarminService? = null
     private var sendCoroutineScope: CoroutineScope? = null
+    private var observerScope: CoroutineScope? = null
 
     val connectionState = MutableLiveData(FieldConnectionState.Disconnected)
     val serviceEnabled = MutableLiveData(false)
@@ -90,7 +90,6 @@ class FieldMonitorConnectionService : Service() {
         synchronized(lock) {
             when (intent?.getIntExtra(LIFECYCLE_INTENT_EXTRA, -1)) {
                 START -> {
-                    test = true
                     val requestedUrl = intent.getStringExtra(FIELD_MONITOR_URI_EXTRA)
                     if (requestedUrl == lastUrl && connectionState.value != FieldConnectionState.Disconnected) {
                         // Someone else already started a connection to the same URL, nothing to do.
@@ -123,7 +122,6 @@ class FieldMonitorConnectionService : Service() {
                         FieldConnectionState.Connecting, FieldConnectionState.Connected -> return START_NOT_STICKY
                         else -> {
                             Log.d("FieldMonitorConnectionService", "Reconnecting to $lastUrl")
-                            Log.d("FieldMonitorConnectionService", "Test: $test")
                             lastUrl!!
                         }
                     }
@@ -139,8 +137,15 @@ class FieldMonitorConnectionService : Service() {
                         connectionState.postValue(FieldConnectionState.Disconnected)
                     }
 
-                    val matchFlow = registerMatchStatusInfoChanged(hubConnection!!)
-                    val teamFlows = registerFieldMonitorDataReceived(hubConnection!!, matchFlow)
+                    val observerScope = CoroutineScope(Dispatchers.IO)
+                    this.observerScope = observerScope
+                    val matchFlow = registerMatchStatusInfoChanged(hubConnection!!, observerScope)
+                    val teamChannel = registerFieldMonitorDataReceived(hubConnection!!, matchFlow, observerScope)
+                    observerScope.launch {
+                        matchFlow.collect {
+                            teamChannel.send(MatchMessage(MATCH_STATE, it.ordinal))
+                        }
+                    }
 
                     connectionState.postValue(FieldConnectionState.Connecting)
 
@@ -168,7 +173,7 @@ class FieldMonitorConnectionService : Service() {
 
                     sendCoroutineScope = CoroutineScope(Dispatchers.Default)
                     sendCoroutineScope!!.launch {
-                        merge(teamFlows, transformToMessage(matchFlow)).collect {
+                        teamChannel.consumeAsFlow().collect {
                             garminService?.messageChannel?.send(it)
                         }
                     }
@@ -204,6 +209,8 @@ class FieldMonitorConnectionService : Service() {
             hubConnection?.stop()
             sendCoroutineScope?.cancel()
             sendCoroutineScope = null
+            observerScope?.cancel()
+            observerScope = null
             if (unregisterForNetworkEvents) {
                 networkChangeReceiver?.unregister()
                 networkChangeReceiver = null
@@ -260,7 +267,7 @@ class FieldMonitorConnectionService : Service() {
         return builder.build()
     }
 
-    inner class NetworkChangeReceiver() {
+    inner class NetworkChangeReceiver {
         private val connectivityManager =
             this@FieldMonitorConnectionService.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 

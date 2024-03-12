@@ -2,18 +2,24 @@ package xyz.silberberg.ftagarminconnect
 
 import android.util.Log
 import com.microsoft.signalr.HubConnection
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.onFailure
+import kotlinx.coroutines.channels.onSuccess
+import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
 data class TeamData(val team: Int, val battery: Float, val robotStatus: Status)
@@ -27,14 +33,17 @@ private enum class BatteryResetStatus {
 @OptIn(FlowPreview::class)
 fun registerFieldMonitorDataReceived(
     hubConnection: HubConnection,
-    matchStatusFlow: Flow<MatchStatus>
-): Flow<Message> {
-    val red1Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
-    val red2Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
-    val red3Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
-    val blue1Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
-    val blue2Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
-    val blue3Flow = MutableStateFlow(TeamData(0, 0f, Status.ETH))
+    matchStatusChannel: SharedFlow<MatchStatus>,
+    observerScope: CoroutineScope
+): Channel<Message> {
+    val red1Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+    val red2Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+    val red3Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+    val blue1Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+    val blue2Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+    val blue3Channel = Channel<TeamData>(1, BufferOverflow.DROP_OLDEST)
+
+    val outputChannel = Channel<Message>(20, BufferOverflow.DROP_OLDEST)
 
     hubConnection.on("FieldMonitorDataChanged", {
         for (team in it) {
@@ -47,7 +56,6 @@ fun registerFieldMonitorDataReceived(
                 !team.rioLink -> Status.RIO
                 !team.connection -> Status.CODE
                 else -> {
-                    // Battery is more important than bandwidth, imo
                     if (team.battery < 7f) {
                         Status.BAT
                     } else {
@@ -59,32 +67,54 @@ fun registerFieldMonitorDataReceived(
             val teamData = TeamData(team.teamNumber, team.battery.toFloat(), status)
             when (team.alliance) {
                 AllianceType.Red -> when (team.station) {
-                    StationType.Station1 -> red1Flow.value = teamData
-                    StationType.Station2 -> red2Flow.value = teamData
-                    StationType.Station3 -> red3Flow.value = teamData
+                    StationType.Station1 -> red1Channel.trySendBlocking(teamData)
+                    StationType.Station2 -> red2Channel.trySendBlocking(teamData)
+                    StationType.Station3 -> red3Channel.trySendBlocking(teamData)
                     else -> {
                         Log.w("TeamFlowObserver", "Unknown alliance type: ${team.alliance}")
+                        return@on
                     }
                 }
 
                 AllianceType.Blue -> when (team.station) {
-                    StationType.Station1 -> blue1Flow.value = teamData
-                    StationType.Station2 -> blue2Flow.value = teamData
-                    StationType.Station3 -> blue3Flow.value = teamData
+                    StationType.Station1 -> blue1Channel.trySendBlocking(teamData)
+                    StationType.Station2 -> blue2Channel.trySendBlocking(teamData)
+                    StationType.Station3 -> blue3Channel.trySendBlocking(teamData)
                     else -> {
                         Log.w("TeamFlowObserver", "Unknown alliance type: ${team.alliance}")
+                        return@on
                     }
                 }
 
                 else -> {
                     Log.w("TeamFlowObserver", "Unknown station type: ${team.station}")
+                    return@on
                 }
             }
+                .onSuccess {
+                    Log.i("TeamFlowObserver", "Sent team data: $teamData")
+                }
+                .onFailure {
+                    Log.w("TeamFlowObserver", "Failed to send team data: $teamData")
+                }
         }
     }, Array<FieldMonitorData>::class.java)
 
-    val resetBatteryFlow =
-        matchStatusFlow.runningFold(BatteryResetStatus.NO_RESET_THIS_MATCH) { acc, matchStatus ->
+    val red1Flow =
+        red1Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+    val red2Flow =
+        red2Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+    val red3Flow =
+        red3Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+    val blue1Flow =
+        blue1Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+    val blue2Flow =
+        blue2Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+    val blue3Flow =
+        blue3Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+
+    val resetBatteryFlow = matchStatusChannel
+        .runningFold(BatteryResetStatus.NO_RESET_THIS_MATCH) { acc, matchStatus ->
             when (matchStatus) {
                 MatchStatus.AUTO -> when (acc) {
                     BatteryResetStatus.DO_RESET -> BatteryResetStatus.HAS_RESET_THIS_MATCH
@@ -96,97 +126,99 @@ fun registerFieldMonitorDataReceived(
                 else -> acc
             }
         }
+        .shareIn(observerScope, SharingStarted.Lazily, replay = 1)
 
-    val createBatteryFlow: (StateFlow<TeamData>, Int) -> Flow<Message> = { teamFlow, offset ->
-        var lowestSeen = TeamData(0, 0f, Status.ETH)
-        teamFlow
-            .combine(resetBatteryFlow)
-            { teamData, resetBatteryStatus ->
-                if (teamData.team != lowestSeen.team
-                    || resetBatteryStatus == BatteryResetStatus.DO_RESET
-                    || (teamData.battery < lowestSeen.battery && teamData.battery != 0f)
-                ) {
-                    lowestSeen = teamData
+    fun createBatteryFlow(teamFlow: SharedFlow<TeamData>, offset: Int) {
+        observerScope.launch {
+            var lowestSeen = TeamData(0, 0f, Status.ETH)
+            teamFlow
+                .combine(resetBatteryFlow) { teamData, resetBatteryStatus ->
+                    if (teamData.team != lowestSeen.team
+                        || resetBatteryStatus == BatteryResetStatus.DO_RESET
+                        || (teamData.battery < lowestSeen.battery && teamData.battery != 0f)
+                    ) {
+                        lowestSeen = teamData
+                    }
+
+                    lowestSeen.battery
                 }
-
-                lowestSeen.battery
-            }
-            .distinctUntilChanged()
-            .sample(50.milliseconds)
-            .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { BatteryMessage(BATTERY_START + offset, it) }
-    }
-
-    val red1BatteryFlow = createBatteryFlow(red1Flow, 0)
-    val red2BatteryFlow = createBatteryFlow(red2Flow, 1)
-    val red3BatteryFlow = createBatteryFlow(red3Flow, 2)
-    val blue1BatteryFlow = createBatteryFlow(blue1Flow, 3)
-    val blue2BatteryFlow = createBatteryFlow(blue2Flow, 4)
-    val blue3BatteryFlow = createBatteryFlow(blue3Flow, 5)
-
-    val createTeamFlow: (StateFlow<TeamData>, Int) -> Flow<Message> = { teamFlow, offset ->
-        teamFlow
-            .map { it.team }
-            .distinctUntilChanged()
-            .sample(50.milliseconds)
-            .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .map { TeamMessage(NUMBER_START + offset, it, false) }
-    }
-
-    val red1TeamFlow = createTeamFlow(red1Flow, 0)
-    val red2TeamFlow = createTeamFlow(red2Flow, 1)
-    val red3TeamFlow = createTeamFlow(red3Flow, 2)
-    val blue1TeamFlow = createTeamFlow(blue1Flow, 3)
-    val blue2TeamFlow = createTeamFlow(blue2Flow, 4)
-    val blue3TeamFlow = createTeamFlow(blue3Flow, 5)
-
-    val shouldVibrateFlow = matchStatusFlow.map {
-        when (it) {
-            // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
-            MatchStatus.NOT_READY, MatchStatus.MATCH_READY, MatchStatus.SENDING_TEAM_DATA,
-            MatchStatus.AUTO, MatchStatus.TRANSITION, MatchStatus.TELEOP -> true
-
-            MatchStatus.TIMEOUT, MatchStatus.READY_TO_PRESTART,
-            MatchStatus.PRESTART_INITIATED, MatchStatus.PRESTART_COMPLETED,
-            MatchStatus.OVER, MatchStatus.ABORTED -> false
+                .distinctUntilChanged()
+                .sample(50.milliseconds)
+                .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+                .map { BatteryMessage(BATTERY_START + offset, it) }
+                .collect {
+                    outputChannel.send(it)
+                }
         }
     }
 
-    val createStatusFlow: (StateFlow<TeamData>, Int) -> Flow<Message> = { teamFlow, offset ->
-        teamFlow
-            .map { it.robotStatus }
-            .distinctUntilChanged()
-            .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-            .combine(shouldVibrateFlow) { status, inMatch ->
-                TeamMessage(STATUS_START + offset, status.value, shouldVibrate = inMatch)
-            }
+    createBatteryFlow(red1Flow, 0)
+    createBatteryFlow(red2Flow, 1)
+    createBatteryFlow(red3Flow, 2)
+    createBatteryFlow(blue1Flow, 3)
+    createBatteryFlow(blue2Flow, 4)
+    createBatteryFlow(blue3Flow, 5)
+
+    fun createTeamFlow(teamChannel: SharedFlow<TeamData>, offset: Int) {
+        observerScope.launch {
+            teamChannel
+                .map {
+                    it.team
+                }
+                .distinctUntilChanged()
+                .sample(50.milliseconds)
+                .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+                .map { TeamMessage(NUMBER_START + offset, it, false) }
+                .collect {
+                    outputChannel.send(it)
+                }
+        }
     }
 
-    val red1StatusFlow = createStatusFlow(red1Flow, 0)
-    val red2StatusFlow = createStatusFlow(red2Flow, 1)
-    val red3StatusFlow = createStatusFlow(red3Flow, 2)
-    val blue1StatusFlow = createStatusFlow(blue1Flow, 3)
-    val blue2StatusFlow = createStatusFlow(blue2Flow, 4)
-    val blue3StatusFlow = createStatusFlow(blue3Flow, 5)
+    createTeamFlow(red1Flow, 0)
+    createTeamFlow(red2Flow, 1)
+    createTeamFlow(red3Flow, 2)
+    createTeamFlow(blue1Flow, 3)
+    createTeamFlow(blue2Flow, 4)
+    createTeamFlow(blue3Flow, 5)
 
-    return merge(
-        red1BatteryFlow,
-        red2BatteryFlow,
-        red3BatteryFlow,
-        blue1BatteryFlow,
-        blue2BatteryFlow,
-        blue3BatteryFlow,
-        red1TeamFlow,
-        red2TeamFlow,
-        red3TeamFlow,
-        blue1TeamFlow,
-        blue2TeamFlow,
-        blue3TeamFlow,
-        red1StatusFlow,
-        red2StatusFlow,
-        red3StatusFlow,
-        blue1StatusFlow,
-        blue2StatusFlow,
-        blue3StatusFlow
-    )
+    val shouldVibrateFlow = matchStatusChannel
+        .map {
+            when (it) {
+                // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
+                MatchStatus.NOT_READY, MatchStatus.MATCH_READY, MatchStatus.SENDING_TEAM_DATA,
+                MatchStatus.AUTO, MatchStatus.TRANSITION, MatchStatus.TELEOP -> true
+
+                MatchStatus.TIMEOUT, MatchStatus.READY_TO_PRESTART,
+                MatchStatus.PRESTART_INITIATED, MatchStatus.PRESTART_COMPLETED,
+                MatchStatus.OVER, MatchStatus.ABORTED -> false
+            }
+        }
+        .shareIn(observerScope, SharingStarted.Lazily, replay = 1)
+
+    fun createStatusFlow(teamFlow: SharedFlow<TeamData>, offset: Int) {
+        observerScope.launch {
+            teamFlow
+                .map {
+                    it.robotStatus
+                }
+                .distinctUntilChanged()
+                .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+                .combine(shouldVibrateFlow) { status, inMatch ->
+                    TeamMessage(STATUS_START + offset, status.value, shouldVibrate = inMatch)
+                }
+                .collect {
+                    outputChannel.send(it)
+                }
+        }
+    }
+
+    createStatusFlow(red1Flow, 0)
+    createStatusFlow(red2Flow, 1)
+    createStatusFlow(red3Flow, 2)
+    createStatusFlow(blue1Flow, 3)
+    createStatusFlow(blue2Flow, 4)
+    createStatusFlow(blue3Flow, 5)
+
+    return outputChannel
 }

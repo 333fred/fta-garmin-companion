@@ -55,13 +55,8 @@ fun registerFieldMonitorDataReceived(
                 !team.radioLink -> Status.RADIO
                 !team.rioLink -> Status.RIO
                 !team.linkActive -> Status.CODE
-                else -> {
-                    if (team.battery < 7f) {
-                        Status.BAT
-                    } else {
-                        Status.GOOD
-                    }
-                }
+                team.brownout -> Status.BAT
+                else -> Status.GOOD
             }
 
             val teamData = TeamData(team.teamNumber, team.battery.toFloat(), status)
@@ -113,12 +108,21 @@ fun registerFieldMonitorDataReceived(
     val blue3Flow =
         blue3Channel.consumeAsFlow().shareIn(observerScope, SharingStarted.Lazily, replay = 1)
 
+    val didResetChannel = Channel<Unit>()
+
     val resetBatteryFlow = matchStatusChannel
+        .combine(didResetChannel.consumeAsFlow()) { matchStatus, _ ->
+            matchStatus
+        }
         .runningFold(BatteryResetStatus.NO_RESET_THIS_MATCH) { acc, matchStatus ->
             when (matchStatus) {
                 MatchStatus.AUTO -> when (acc) {
                     BatteryResetStatus.DO_RESET -> BatteryResetStatus.HAS_RESET_THIS_MATCH
-                    BatteryResetStatus.NO_RESET_THIS_MATCH -> BatteryResetStatus.DO_RESET
+                    BatteryResetStatus.NO_RESET_THIS_MATCH -> {
+                        // Ensure that we'll go to the next state, as we won't get another Auto packet
+                        didResetChannel.send(Unit)
+                        BatteryResetStatus.DO_RESET
+                    }
                     else -> acc
                 }
 
@@ -135,6 +139,7 @@ fun registerFieldMonitorDataReceived(
                 .combine(resetBatteryFlow) { teamData, resetBatteryStatus ->
                     if (teamData.team != lowestSeen.team
                         || resetBatteryStatus == BatteryResetStatus.DO_RESET
+                        || lowestSeen.battery == 0f
                         || (teamData.battery < lowestSeen.battery && teamData.battery != 0f)
                     ) {
                         lowestSeen = teamData
@@ -194,6 +199,7 @@ fun registerFieldMonitorDataReceived(
                 MatchStatus.OVER, MatchStatus.ABORTED -> false
             }
         }
+        .distinctUntilChanged()
         .shareIn(observerScope, SharingStarted.Lazily, replay = 1)
 
     fun createStatusFlow(teamFlow: SharedFlow<TeamData>, offset: Int) {
@@ -206,6 +212,11 @@ fun registerFieldMonitorDataReceived(
                 .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
                 .combine(shouldVibrateFlow) { status, inMatch ->
                     TeamMessage(STATUS_START + offset, status.value, shouldVibrate = inMatch)
+                }
+                .distinctUntilChanged { old, new ->
+                    // Explicitly ignore shouldVibrate so that we don't send a message across match state
+                    // boundaries when shouldVibrate changes
+                    old.key == new.key && old.teamMessage == new.teamMessage
                 }
                 .collect {
                     outputChannel.send(it)

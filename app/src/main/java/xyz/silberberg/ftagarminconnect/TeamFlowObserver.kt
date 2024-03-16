@@ -50,11 +50,11 @@ fun registerFieldMonitorDataReceived(
             val status: Status = when {
                 team.isEStopped -> Status.ESTOP
                 team.isBypassed -> Status.BYP
-                !team.linkActive -> Status.ETH
-                !team.dsLinkActive -> Status.DS
+                !team.connection -> Status.ETH
+                team.stationStatus != DSStationStatus.Good -> Status.DS
                 !team.radioLink -> Status.RADIO
                 !team.rioLink -> Status.RIO
-                !team.connection -> Status.CODE
+                !team.linkActive -> Status.CODE
                 else -> {
                     if (team.battery < 7f) {
                         Status.BAT
@@ -92,7 +92,7 @@ fun registerFieldMonitorDataReceived(
                 }
             }
                 .onSuccess {
-                    Log.i("TeamFlowObserver", "Sent team data: $teamData")
+                    //Log.i("TeamFlowObserver", "Sent team data: $teamData")
                 }
                 .onFailure {
                     Log.w("TeamFlowObserver", "Failed to send team data: $teamData")

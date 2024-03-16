@@ -141,6 +141,7 @@ class FieldMonitorConnectionService : Service() {
                     this.observerScope = observerScope
                     val matchFlow = registerMatchStatusInfoChanged(hubConnection!!, observerScope)
                     val teamChannel = registerFieldMonitorDataReceived(hubConnection!!, matchFlow, observerScope)
+                    hubConnection!!.on("robotVersionDataChanged", { }, Any::class.java)
                     observerScope.launch {
                         matchFlow.collect {
                             teamChannel.send(MatchMessage(MATCH_STATE, it.ordinal))

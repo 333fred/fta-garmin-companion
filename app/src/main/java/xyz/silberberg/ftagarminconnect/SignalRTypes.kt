@@ -44,7 +44,7 @@ data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("pcc") val bwUtilization: BWUtilizationType,
     @JsonProperty("pdd") val wpaKeyStatus: WPAKeyStatusType,
     @JsonProperty("pee") val driverStationIsOfficial: Boolean,
-    @JsonProperty("pff") val stationStatus: DSConnectionStatusType,
+    @JsonProperty("pff") val stationStatus: DSStationStatus,
     @JsonProperty("pgg") val brownout: Boolean,
     @JsonProperty("phh") val eStopSource: String?,
     @JsonProperty("pii") val isAStopPressed: Boolean,
@@ -154,24 +154,21 @@ enum class WPAKeyStatusType {
     }
 }
 
-enum class DSConnectionStatusType {
-    NotConnected,
-    ConnectedDSNotRunning,
-    ConnectedWaiting,
-    ConnectedWrongStation,
-    Connected;
+enum class DSStationStatus {
+    Good,
+    WrongStation,
+    Waiting,
+    Unknown;
 
     companion object {
         @JsonCreator
         @JvmStatic
         fun fromValue(value: Int) =
             when (value) {
-                0 -> NotConnected
-                1 -> ConnectedDSNotRunning
-                2 -> ConnectedWaiting
-                3 -> ConnectedWrongStation
-                4 -> Connected
-                else -> NotConnected
+                0 -> Good
+                1 -> WrongStation
+                2 -> Waiting
+                else -> Unknown
             }
     }
 }

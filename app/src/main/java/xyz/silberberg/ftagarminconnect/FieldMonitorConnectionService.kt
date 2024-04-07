@@ -29,10 +29,10 @@ import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
 
 const val FIELD_MONITOR_URI_EXTRA = "field_monitor_uri_extra"
+const val USE_ETHERNET_EXTRA = "use_ethernet_extra"
 
 const val LIFECYCLE_INTENT_EXTRA = "lifecycle_intent_extra"
 const val START = 0
-
 const val RECONNECT = 1
 
 // Used when we're not on WiFi, but the service has been started and we want to wait until we see
@@ -96,6 +96,8 @@ class FieldMonitorConnectionService : Service() {
                         return START_NOT_STICKY
                     }
 
+                    val useEthernet = intent.getBooleanExtra(USE_ETHERNET_EXTRA, false)
+
                     lastUrl = if (requestedUrl == null) {
                         Log.e("FieldMonitorConnectionService", "No URL provided to connect to")
                         return START_NOT_STICKY
@@ -110,7 +112,7 @@ class FieldMonitorConnectionService : Service() {
                     // This will immediately cause a callback with the current network settings. That will then
                     // tell us to connect or not, depending on whether we're on WiFi or not, sending either
                     // RECONNECT or DISCONNECT_BUT_KEEP_FOREGROUND.
-                    networkChangeReceiver!!.register()
+                    networkChangeReceiver!!.register(useEthernet)
 
                     serviceEnabled.postValue(true)
 
@@ -291,9 +293,15 @@ class FieldMonitorConnectionService : Service() {
             }
         }
 
-        fun register() {
+        fun register(useEthernet: Boolean) {
             val networkRequest = NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addTransportType(
+                    if (useEthernet) {
+                        NetworkCapabilities.TRANSPORT_ETHERNET
+                    } else {
+                        NetworkCapabilities.TRANSPORT_WIFI
+                    }
+                )
                 .build()
 
             connectivityManager.registerNetworkCallback(networkRequest, networkCallback)

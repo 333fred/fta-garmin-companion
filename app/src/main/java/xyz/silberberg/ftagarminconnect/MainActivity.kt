@@ -6,17 +6,24 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -30,8 +37,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import xyz.silberberg.ftagarminconnect.ui.theme.FTAGarminConnectTheme
+
+const val USE_ETHERNET_KEY = "useEthernetKey"
 
 class MainActivity : ComponentActivity() {
     private var fieldMonitorConnectionService by mutableStateOf<FieldMonitorConnectionService?>(null)
@@ -40,6 +50,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val sharedPreferences = getSharedPreferences("FTAGarminConnect", Context.MODE_PRIVATE)
 
         val importance = NotificationManager.IMPORTANCE_LOW
         val channel = NotificationChannel(
@@ -68,7 +80,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ConnectionUI(fieldMonitorConnectionService, garminService)
+                    ConnectionUI(fieldMonitorConnectionService, garminService, sharedPreferences)
                 }
             }
         }
@@ -106,10 +118,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ConnectionUI(
     fieldMonitorConnectionService: FieldMonitorConnectionService?,
-    garminService: GarminService?
+    garminService: GarminService?,
+    sharedPreferences: SharedPreferences
 ) {
     var url by remember { mutableStateOf("http://10.0.100.5/fieldMonitorHub") }
     var isValidUrl by remember { mutableStateOf(true) }
+    var useEthernet by remember {
+        mutableStateOf(
+            sharedPreferences.getBoolean(
+                USE_ETHERNET_KEY,
+                false
+            )
+        )
+    }
     val context = LocalContext.current
 
     val connectionState by fieldMonitorConnectionService?.connectionState?.observeAsState(
@@ -151,9 +172,17 @@ fun ConnectionUI(
                 },
                 label = { Text("SignalR Address") }
             )
+            Row(Modifier.padding(5.dp).clickable {
+                useEthernet = !useEthernet
+                sharedPreferences.edit().putBoolean(USE_ETHERNET_KEY, useEthernet).apply()
+            }) {
+                Text("Use Ethernet Connection", modifier = Modifier.align(Alignment.CenterVertically))
+                Spacer(Modifier.width(10.dp))
+                Switch(checked = useEthernet, onCheckedChange = null)
+            }
             Button(onClick = {
                 if (!serviceEnabled) {
-                    enableFieldMonitorService(url, context)
+                    enableFieldMonitorService(url, useEthernet, context)
                 } else {
                     disableFieldMonitorService(context)
                 }
@@ -170,10 +199,11 @@ fun ConnectionUI(
     }
 }
 
-fun enableFieldMonitorService(urlString: String, context: Context) {
+fun enableFieldMonitorService(urlString: String, useEthernet: Boolean, context: Context) {
     val intent = Intent(context, FieldMonitorConnectionService::class.java)
     intent.putExtra(FIELD_MONITOR_URI_EXTRA, urlString)
     intent.putExtra(LIFECYCLE_INTENT_EXTRA, START)
+    intent.putExtra(USE_ETHERNET_EXTRA, useEthernet)
     context.startService(intent)
 }
 

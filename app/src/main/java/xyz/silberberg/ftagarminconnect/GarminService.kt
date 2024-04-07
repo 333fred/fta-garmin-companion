@@ -19,9 +19,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 private const val TAG = "GarminConnection"
@@ -39,7 +40,8 @@ class GarminService : Service() {
     private var connectIQ: ConnectIQ? = null
     private var device: IQDevice? = null
     private var app: IQApp? = null
-    private var senderCoroutineScope: CoroutineScope? = null
+    private var senderCoroutineScope = CoroutineScope(Dispatchers.IO)
+    private val lastUnsentMessages = ConcurrentHashMap<Int, Any>()
 
     override fun onBind(intent: Intent?): IBinder = binder
 
@@ -109,6 +111,7 @@ class GarminService : Service() {
                     if (status == IQDevice.IQDeviceStatus.CONNECTED) {
                         getAppInfo()
                     } else {
+                        connectionState.postValue(false)
                         stopSend()
                     }
                 }
@@ -128,6 +131,8 @@ class GarminService : Service() {
                         stopSelf()
                         return
                     }
+
+                    Log.d(TAG, "Received app info for ${app.displayName}")
 
                     synchronized(lock) {
                         this@GarminService.app = app
@@ -152,10 +157,16 @@ class GarminService : Service() {
     }
 
     private fun startSend() {
+        Log.d(TAG, "Starting message sender")
         synchronized(lock) {
             connectionState.postValue(true)
-            senderCoroutineScope = CoroutineScope(Dispatchers.IO)
-            senderCoroutineScope?.launch {
+            resetCoroutine()
+            Log.d(TAG, "Launching message sender")
+            senderCoroutineScope.launch {
+                // Send the last messages for each item that were observed while the device was disconnected
+                Log.d(TAG, "Sending ${lastUnsentMessages.size} unsent messages")
+                sendMessages(connectIQ!!, device!!, app!!, lastUnsentMessages, false)
+                Log.d(TAG, "Launching wait and send routine")
                 waitAndSendMessages(connectIQ!!, device!!, app!!, messageChannel, false)
             }
         }
@@ -168,29 +179,15 @@ class GarminService : Service() {
         messageChannel: Channel<Message>,
         useAdb: Boolean
     ) {
-        messageChannel.consumeAsFlow().timedChunk(50.milliseconds).collect { messages ->
+        messageChannel.receiveAsFlow().timedChunk(50.milliseconds).collect { messages ->
             val dedupedMessages = messages.associateBy { it.key }
 
             val map = HashMap<Int, Any>()
             var shouldVibrate = false
             for (messagePair in dedupedMessages) {
                 val message = messagePair.value
-                when (message) {
-                    is TeamMessage -> {
-                        shouldVibrate = shouldVibrate || message.shouldVibrate
-                        map[message.key] = message.teamMessage
-                    }
-
-                    is BatteryMessage -> {
-                        map[message.key] = message.battery
-                    }
-
-                    is MatchMessage -> {
-                        map[message.key] = message.matchState
-                    }
-
-                    else -> throw IllegalArgumentException("Unexpected value $message")
-                }
+                shouldVibrate = shouldVibrate || message.shouldVibrate
+                map[message.key] = message.value
             }
 
             if (shouldVibrate) {
@@ -253,8 +250,23 @@ class GarminService : Service() {
 
     private fun stopSend() {
         synchronized(lock) {
-            senderCoroutineScope?.cancel()
-            senderCoroutineScope = null
+            resetCoroutine()
+            lastUnsentMessages.clear()
+            senderCoroutineScope.launch {
+                var shouldVibrate = false
+                messageChannel.receiveAsFlow().collect {
+                    lastUnsentMessages[it.key] = it.value
+                    shouldVibrate = shouldVibrate || it.shouldVibrate
+                    lastUnsentMessages[VIBE] = shouldVibrate
+                }
+            }
+        }
+    }
+
+    private fun resetCoroutine() {
+        synchronized(lock) {
+            senderCoroutineScope.cancel()
+            senderCoroutineScope = CoroutineScope(Dispatchers.IO)
         }
     }
 

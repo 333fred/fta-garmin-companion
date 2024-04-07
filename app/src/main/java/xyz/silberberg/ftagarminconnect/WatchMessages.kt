@@ -20,8 +20,24 @@ const val MATCH_STATE = 21
 
 abstract class Message {
     abstract val key: Int
+    abstract val value: Any
+    abstract val shouldVibrate: Boolean
 }
 
-data class BatteryMessage(override val key: Int, val battery: Float) : Message()
-data class TeamMessage(override val key: Int, val teamMessage: Int, val shouldVibrate: Boolean) : Message()
-data class MatchMessage(override val key: Int, val matchState: Int) : Message()
+data class BatteryMessage(override val key: Int, val battery: Float) : Message() {
+    override val value: Any
+        get() = battery
+    override val shouldVibrate: Boolean
+        get() = false
+}
+
+data class TeamMessage(override val key: Int, val teamMessage: Int, override val shouldVibrate: Boolean) : Message() {
+    override val value: Any
+        get() = teamMessage
+}
+data class MatchMessage(override val key: Int, val matchState: Int) : Message() {
+    override val value: Any
+        get() = matchState
+    override val shouldVibrate: Boolean
+        get() = false
+}

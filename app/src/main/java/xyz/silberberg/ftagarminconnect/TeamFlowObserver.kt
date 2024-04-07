@@ -87,7 +87,7 @@ fun registerFieldMonitorDataReceived(
                 }
             }
                 .onSuccess {
-                    //Log.i("TeamFlowObserver", "Sent team data: $teamData")
+                    Log.d("TeamFlowObserver", "Sent team data: $teamData")
                 }
                 .onFailure {
                     Log.w("TeamFlowObserver", "Failed to send team data: $teamData")

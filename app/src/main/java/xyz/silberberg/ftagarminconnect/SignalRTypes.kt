@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.DeserializationContext
 import com.fasterxml.jackson.databind.JsonDeserializer
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
+@Suppress("ANNOTATION_WILL_BE_APPLIED_ALSO_TO_PROPERTY_OR_FIELD")
 data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("p1") val alliance: AllianceType,
     @JsonProperty("p2") val station: StationType,
@@ -71,6 +72,7 @@ class BooleanCoercingDoubleDeserializer : JsonDeserializer<Double?>() {
     override fun getNullValue(ctxt: DeserializationContext): Double? = null
 }
 
+@Suppress("ANNOTATION_WILL_BE_APPLIED_ALSO_TO_PROPERTY_OR_FIELD")
 data class MatchStatusInfo(
     @JsonProperty("p1") val matchState: MatchStatus,
     @JsonProperty("p2") val matchNumber: Int,

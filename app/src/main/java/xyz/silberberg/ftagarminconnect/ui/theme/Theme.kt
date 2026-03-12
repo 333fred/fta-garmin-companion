@@ -1,7 +1,10 @@
 package xyz.silberberg.ftagarminconnect.ui.theme
 
-import android.app.Activity
+import android.graphics.Color as AndroidColor
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -13,7 +16,6 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
         primary = Purple80,
@@ -56,9 +58,17 @@ fun FTAGarminConnectTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme
+            val activity = view.context as? ComponentActivity ?: return@SideEffect
+            activity.enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.auto(
+                    AndroidColor.TRANSPARENT,
+                    AndroidColor.TRANSPARENT,
+                ) { darkTheme },
+                navigationBarStyle = SystemBarStyle.auto(
+                    lightScrim = LightColorScheme.background.toArgb(),
+                    darkScrim = DarkColorScheme.background.toArgb(),
+                ) { darkTheme },
+            )
         }
     }
 

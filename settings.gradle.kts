@@ -5,14 +5,17 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://developer.garmin.com/downloads/connect-iq/companion-app-sdk/maven/") }
     }
 }
 
 rootProject.name = "FTAGarminConnect"
 include(":app")
- 

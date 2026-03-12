@@ -213,8 +213,8 @@ class GarminService : Service() {
                     messages
                 ) { _, _, status ->
                     when (status) {
-                        ConnectIQ.IQMessageStatus.SUCCESS -> it.resume(true, null)
-                        ConnectIQ.IQMessageStatus.FAILURE_DURING_TRANSFER -> it.resume(false, null)
+                        ConnectIQ.IQMessageStatus.SUCCESS -> it.resume(true) { _, _, _ -> }
+                        ConnectIQ.IQMessageStatus.FAILURE_DURING_TRANSFER -> it.resume(false) { _, _, _ -> }
                         else -> {
                             if (status == ConnectIQ.IQMessageStatus.FAILURE_UNKNOWN && useAdb) {
                                 // There's some quirk with the simulator returning SUCCESS then unknown failure

@@ -2,10 +2,6 @@ package xyz.silberberg.ftagarminconnect
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonCreator
-import com.fasterxml.jackson.core.JsonParser
-import com.fasterxml.jackson.databind.DeserializationContext
-import com.fasterxml.jackson.databind.JsonDeserializer
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 @Suppress("ANNOTATION_WILL_BE_APPLIED_ALSO_TO_PROPERTY_OR_FIELD")
 data class FieldMonitorData @JsonCreator constructor(
@@ -20,11 +16,11 @@ data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("p9") val isEnabled: Boolean,
     @JsonProperty("pa") val isAuto: Boolean,
     @JsonProperty("pb") val isBypassed: Boolean,
-    @JsonProperty("pc") val isEStopPressed: Boolean,
+    @JsonProperty("pc") val isEStopLatched: Boolean,
     @JsonProperty("pd") val isEStopped: Boolean,
     @JsonProperty("pe") val battery: Double,
     @JsonProperty("pf") val monitorStatus: MonitorStatusType,
-    @JsonProperty("pg") val averageTripTime: Byte,
+    @JsonProperty("pg") val averageTripTime: Int,
     @JsonProperty("ph") val lostPackets: Int,
     @JsonProperty("pi") val signal: Int?,
     @JsonProperty("pj") val noise: Int?,
@@ -52,25 +48,15 @@ data class FieldMonitorData @JsonCreator constructor(
     @JsonProperty("pff") val stationStatus: DSStationStatus,
     @JsonProperty("pgg") val brownout: Boolean,
     @JsonProperty("phh") val eStopSource: String?,
-    @JsonProperty("pii") val isAStopPressed: Boolean,
+    @JsonProperty("pii") val isAStopLatched: Boolean,
     @JsonProperty("pjj") val isAStopped: Boolean,
     @JsonProperty("pjk") val moveToStation: String?,
-    @JsonProperty("pll") val radioConnectionQuality: RadioConnectionQuality?,
-    @JsonProperty("pmm") val radioConnectedToAp: Boolean?,
-    @JsonProperty("pnn") val previousMACAddress: String?,
-    @JsonProperty("poo") @JsonDeserialize(using = BooleanCoercingDoubleDeserializer::class) val minBattery: Double?
+    @JsonProperty("pll") val radioConnectionQuality: RadioConnectionQuality,
+    @JsonProperty("pmm") val radioConnectedToAp: Boolean,
+    @JsonProperty("pnn") val isEStopPressed: Boolean,
+    @JsonProperty("poo") val isAStopPressed: Boolean,
+    @JsonProperty("ppp") val dsOpModeSelected: Boolean
 )
-
-class BooleanCoercingDoubleDeserializer : JsonDeserializer<Double?>() {
-    override fun deserialize(p: JsonParser, ctxt: DeserializationContext): Double? {
-        return when {
-            p.currentToken.isBoolean -> null
-            else -> p.doubleValue
-        }
-    }
-
-    override fun getNullValue(ctxt: DeserializationContext): Double? = null
-}
 
 @Suppress("ANNOTATION_WILL_BE_APPLIED_ALSO_TO_PROPERTY_OR_FIELD")
 data class MatchStatusInfo(

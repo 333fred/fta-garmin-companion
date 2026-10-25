@@ -9,12 +9,14 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.onFailure
 import kotlinx.coroutines.channels.onSuccess
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.sample
@@ -22,7 +24,63 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
-data class TeamData(val team: Int, val battery: Float, val robotStatus: Status)
+data class TeamData(
+    val team: Int,
+    val battery: Float,
+    val robotStatus: Status,
+    val brownout: Boolean = false
+)
+
+private fun teamStatusMessages(
+    teamFlow: Flow<TeamData>,
+    matchStatusFlow: Flow<MatchStatus>,
+    offset: Int
+): Flow<TeamMessage> = flow {
+    var currentTeam: Int? = null
+    var previousMatchStatus: MatchStatus? = null
+    var hasBrownedOut = false
+
+    teamFlow
+        .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        .combine(matchStatusFlow) { team, matchStatus ->
+            if (team.team != currentTeam
+                || matchStatus == MatchStatus.PRESTART_INITIATED
+                || (matchStatus == MatchStatus.AUTO && previousMatchStatus != MatchStatus.AUTO)
+            ) {
+                hasBrownedOut = false
+            }
+            currentTeam = team.team
+            previousMatchStatus = matchStatus
+
+            val inMatch = matchStatus == MatchStatus.AUTO
+                || matchStatus == MatchStatus.TRANSITION
+                || matchStatus == MatchStatus.TELEOP
+            val firstBrownout = inMatch && team.brownout && !hasBrownedOut
+            hasBrownedOut = hasBrownedOut || firstBrownout
+
+            val status = if (team.robotStatus == Status.GOOD && hasBrownedOut) {
+                Status.BAT_CONNECTED
+            } else {
+                team.robotStatus
+            }
+            val shouldVibrate = when (matchStatus) {
+                // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
+                MatchStatus.NOT_READY, MatchStatus.MATCH_READY, MatchStatus.SENDING_TEAM_DATA,
+                MatchStatus.AUTO, MatchStatus.TRANSITION, MatchStatus.TELEOP -> true
+
+                else -> false
+            }
+            val repeatedBrownout = hasBrownedOut && !firstBrownout
+                && (status == Status.BAT || status == Status.BAT_CONNECTED)
+            TeamMessage(STATUS_START + offset, status.value, shouldVibrate && !repeatedBrownout)
+        }
+        .distinctUntilChanged { old, new ->
+            // Explicitly ignore shouldVibrate so that we don't send a message across match state
+            // boundaries when shouldVibrate changes
+            old.key == new.key && old.teamMessage == new.teamMessage
+        }
+        .collect { emit(it) }
+}
 
 private enum class BatteryResetStatus {
     DO_RESET,
@@ -59,7 +117,7 @@ fun registerFieldMonitorDataReceived(
                 else -> Status.GOOD
             }
 
-            val teamData = TeamData(team.teamNumber, team.battery.toFloat(), status)
+            val teamData = TeamData(team.teamNumber, team.battery.toFloat(), status, team.brownout)
             when (team.alliance) {
                 AllianceType.Red -> when (team.station) {
                     StationType.Station1 -> red1Channel.trySendBlocking(teamData)
@@ -187,37 +245,9 @@ fun registerFieldMonitorDataReceived(
     createTeamFlow(blue2Flow, 4)
     createTeamFlow(blue3Flow, 5)
 
-    val shouldVibrateFlow = matchStatusChannel
-        .map {
-            when (it) {
-                // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
-                MatchStatus.NOT_READY, MatchStatus.MATCH_READY, MatchStatus.SENDING_TEAM_DATA,
-                MatchStatus.AUTO, MatchStatus.TRANSITION, MatchStatus.TELEOP -> true
-
-                MatchStatus.TIMEOUT, MatchStatus.READY_TO_PRESTART,
-                MatchStatus.PRESTART_INITIATED, MatchStatus.PRESTART_COMPLETED,
-                MatchStatus.OVER, MatchStatus.ABORTED -> false
-            }
-        }
-        .distinctUntilChanged()
-        .shareIn(observerScope, SharingStarted.Lazily, replay = 1)
-
     fun createStatusFlow(teamFlow: SharedFlow<TeamData>, offset: Int) {
         observerScope.launch {
-            teamFlow
-                .map {
-                    it.robotStatus
-                }
-                .distinctUntilChanged()
-                .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-                .combine(shouldVibrateFlow) { status, inMatch ->
-                    TeamMessage(STATUS_START + offset, status.value, shouldVibrate = inMatch)
-                }
-                .distinctUntilChanged { old, new ->
-                    // Explicitly ignore shouldVibrate so that we don't send a message across match state
-                    // boundaries when shouldVibrate changes
-                    old.key == new.key && old.teamMessage == new.teamMessage
-                }
+            teamStatusMessages(teamFlow, matchStatusChannel, offset)
                 .collect {
                     outputChannel.send(it)
                 }

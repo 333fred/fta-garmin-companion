@@ -180,13 +180,15 @@ class GarminService : Service() {
         useAdb: Boolean
     ) {
         messageChannel.receiveAsFlow().timedChunk(50.milliseconds).collect { messages ->
-            val dedupedMessages = messages.associateBy { it.key }
+            var shouldVibrate = false
+            val dedupedMessages = messages.associateBy { message ->
+                // Recovery in the same batch must not discard the first brownout's vibration.
+                shouldVibrate = shouldVibrate || message.shouldVibrate
+                message.key
+            }
 
             val map = HashMap<Int, Any>()
-            var shouldVibrate = false
-            for (messagePair in dedupedMessages) {
-                val message = messagePair.value
-                shouldVibrate = shouldVibrate || message.shouldVibrate
+            for (message in dedupedMessages.values) {
                 map[message.key] = message.value
             }
 

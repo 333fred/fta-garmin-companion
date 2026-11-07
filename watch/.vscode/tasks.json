@@ -1,0 +1,44 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build_sim",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}\\..\\build.ps1",
+                "-Target",
+                "Watch"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build_real",
+            "dependsOn": ["build_sim"],
+            "problemMatcher": []
+        },
+        {
+            "label": "connectiq",
+            "type": "process",
+            "command": "${env:GARMIN_SDK}\\bin\\connectiq.bat",
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "run_sim",
+            "type": "process",
+            "command": "${env:GARMIN_SDK}\\bin\\monkeydo.bat",
+            "args": [
+                "${workspaceFolder}\\bin\\fta-monitor-garmin-watchapp-vivoactive3.prg",
+                "vivoactive3"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}

@@ -9,3 +9,23 @@
 .cxx
 local.properties
 app/.idea/*
+
+# Signing material
+developer_key*
+*.der
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Build artifacts
+*.apk
+*.aab
+*.prg
+*.iq
+*.prg.debug.xml
+/app/build/
+/watch/bin/
+/companion/app/release/

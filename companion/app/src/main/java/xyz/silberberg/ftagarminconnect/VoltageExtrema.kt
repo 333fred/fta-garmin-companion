@@ -22,6 +22,7 @@ internal class VoltageExtrema(capacity: Int, private val minimum: Boolean) {
         while (size > 0) {
             val last = candidateAt(previousIndex(endIndex))
             if ((minimum && last.battery < team.battery) || (!minimum && last.battery > team.battery)) {
+                if (last.receivedAtMillis == team.receivedAtMillis) return
                 break
             }
             removeLast()

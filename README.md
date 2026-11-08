@@ -21,14 +21,15 @@ vivoactive HR, vivoactive 3, or fenix 7S.
 ## Building
 
 On Windows, building both apps requires PowerShell 7, JDK 17, Android SDK 36,
-the Connect IQ SDK and device definitions, and a Garmin developer key:
+the Connect IQ SDK and device definitions, and a Garmin developer key. Select
+the SDK in Connect IQ SDK Manager and place the key at the repository root as
+`developer_key` or `developer_key.der`:
 
 ```powershell
-$env:GARMIN_SDK = 'C:\path\to\connectiq-sdk'
-$env:GARMIN_DEVELOPER_KEY = 'C:\path\to\developer_key.der'
 .\build.ps1
 ```
 
 The Android APK is written to `companion\app\build\outputs\apk\debug\` and
 the watch PRGs to `watch\bin\`. Use `.\build.ps1 -Target Android` or
-`.\build.ps1 -Target Watch` to build either app separately.
+`.\build.ps1 -Target Watch` to build either app separately. The `-GarminSdk` and
+`-GarminDeveloperKey` parameters override the selected SDK and local key.

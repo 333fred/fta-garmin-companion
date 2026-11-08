@@ -23,6 +23,11 @@ jobs:
       - name: Build and lint
         shell: pwsh
         run: .\build.ps1 -Target Android
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          .\companion\gradlew.bat -p .\companion ':app:testDebugUnitTest'
+          if ($LASTEXITCODE -ne 0) { throw "Android unit tests failed with exit code $LASTEXITCODE." }
 
   watch:
     name: Watch

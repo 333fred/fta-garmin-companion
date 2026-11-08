@@ -11,7 +11,8 @@ enum class Status(val value: Int) {
     BWU(7),
     BYP(8),
     BAT(9),
-    BAT_CONNECTED(10)
+    BAT_CONNECTED(10),
+    NO_MOVEMENT(11)
 }
 
 const val STATUS_START = 1

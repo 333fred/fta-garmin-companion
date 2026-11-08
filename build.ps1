@@ -54,14 +54,31 @@ if ($devices.Count -eq 0 -or @($devices | Where-Object { [string]::IsNullOrWhite
 
 if ($Target -ne 'Android') {
     if ([string]::IsNullOrWhiteSpace($GarminSdk)) {
-        throw 'Specify the Connect IQ SDK with -GarminSdk or GARMIN_SDK.'
+        if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+            $selectedSdk = Join-Path $env:APPDATA 'Garmin\ConnectIQ\current-sdk.cfg'
+            if (Test-Path -LiteralPath $selectedSdk -PathType Leaf) {
+                $GarminSdk = ([string](Get-Content -LiteralPath $selectedSdk -Raw)).Trim()
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($GarminSdk)) {
+            throw 'Select a Connect IQ SDK in SDK Manager, or specify -GarminSdk or GARMIN_SDK.'
+        }
     }
     $compiler = Join-Path $GarminSdk 'bin\monkeyc.bat'
     if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
         throw "Connect IQ compiler not found: $compiler"
     }
     if ([string]::IsNullOrWhiteSpace($GarminDeveloperKey)) {
-        throw 'Specify a developer signing key with -GarminDeveloperKey or GARMIN_DEVELOPER_KEY.'
+        foreach ($name in @('developer_key', 'developer_key.der')) {
+            $localKey = Join-Path $PSScriptRoot $name
+            if (Test-Path -LiteralPath $localKey -PathType Leaf) {
+                $GarminDeveloperKey = $localKey
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($GarminDeveloperKey)) {
+            throw 'Place developer_key or developer_key.der in the repository root, or specify -GarminDeveloperKey or GARMIN_DEVELOPER_KEY.'
+        }
     }
     if (-not (Test-Path -LiteralPath $GarminDeveloperKey -PathType Leaf)) {
         throw "Developer signing key not found: $GarminDeveloperKey"

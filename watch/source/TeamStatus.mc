@@ -112,7 +112,8 @@ module TeamStatus {
         BWU = 7,
         BYP = 8,
         BAT = 9,
-        BAT_CONNECTED = 10
+        BAT_CONNECTED = 10,
+        NO_MOVEMENT = 11
     }
 
     function getStatusString(status) {
@@ -138,6 +139,8 @@ module TeamStatus {
             case BAT:
             case BAT_CONNECTED:
                 return Rez.Strings.battery;
+            case NO_MOVEMENT:
+                return Rez.Strings.no_movement;
             default:
                 return "";
         }

@@ -28,5 +28,6 @@
     <string id="bandwidth">BWU</string>
     <string id="bypassed">BYP</string>
     <string id="battery">BAT</string>
+    <string id="no_movement">MOV</string>
     <string id="good">G</string>
 </strings>

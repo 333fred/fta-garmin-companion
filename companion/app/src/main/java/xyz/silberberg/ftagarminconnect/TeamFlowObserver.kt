@@ -1,5 +1,6 @@
 package xyz.silberberg.ftagarminconnect
 
+import android.os.SystemClock
 import android.util.Log
 import com.microsoft.signalr.HubConnection
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +29,9 @@ data class TeamData(
     val team: Int,
     val battery: Float,
     val robotStatus: Status,
-    val brownout: Boolean = false
+    val brownout: Boolean = false,
+    val isEnabled: Boolean = false,
+    val receivedAtMillis: Long = SystemClock.elapsedRealtime()
 )
 
 private fun teamStatusMessages(
@@ -39,6 +42,7 @@ private fun teamStatusMessages(
     var currentTeam: Int? = null
     var previousMatchStatus: MatchStatus? = null
     var hasBrownedOut = false
+    val batteryHistory = BatteryHistory()
 
     teamFlow
         .buffer(3, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -48,6 +52,7 @@ private fun teamStatusMessages(
                 || (matchStatus == MatchStatus.AUTO && previousMatchStatus != MatchStatus.AUTO)
             ) {
                 hasBrownedOut = false
+                batteryHistory.clear()
             }
             currentTeam = team.team
             previousMatchStatus = matchStatus
@@ -58,10 +63,20 @@ private fun teamStatusMessages(
             val firstBrownout = inMatch && team.brownout && !hasBrownedOut
             hasBrownedOut = hasBrownedOut || firstBrownout
 
-            val status = if (team.robotStatus == Status.GOOD && hasBrownedOut) {
-                Status.BAT_CONNECTED
+            if (!inMatch || !team.isEnabled || team.robotStatus != Status.GOOD
+                || !team.battery.isFinite() || team.battery <= 0f
+            ) {
+                batteryHistory.clear()
             } else {
-                team.robotStatus
+                batteryHistory.add(team)
+            }
+            val noMovement = batteryHistory.hasNoMovement()
+
+            val status = when {
+                team.robotStatus != Status.GOOD -> team.robotStatus
+                noMovement -> Status.NO_MOVEMENT
+                hasBrownedOut -> Status.BAT_CONNECTED
+                else -> Status.GOOD
             }
             val shouldVibrate = when (matchStatus) {
                 // When we're about to ready or are in a match, I want an alert. Otherwise, I don't.
@@ -117,7 +132,9 @@ fun registerFieldMonitorDataReceived(
                 else -> Status.GOOD
             }
 
-            val teamData = TeamData(team.teamNumber, team.battery.toFloat(), status, team.brownout)
+            val teamData = TeamData(
+                team.teamNumber, team.battery.toFloat(), status, team.brownout, team.isEnabled
+            )
             when (team.alliance) {
                 AllianceType.Red -> when (team.station) {
                     StationType.Station1 -> red1Channel.trySendBlocking(teamData)

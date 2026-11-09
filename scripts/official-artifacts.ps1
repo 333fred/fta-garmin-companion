@@ -18,6 +18,43 @@ function Normalize-Fingerprint([string] $Value) {
     $normalized
 }
 
+function Read-ApkSigningFingerprint([string] $Verification) {
+    $signers = [regex]::Matches($Verification, '(?m)^Number of signers:[ \t]*([0-9]+)[ \t]*\r?$')
+    if ($signers.Count -ne 1 -or $signers[0].Groups[1].Value -ne '1') {
+        throw 'Expected exactly one APK signer.'
+    }
+    $certificates = [regex]::Matches(
+        $Verification,
+        '(?s)-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE-----'
+    )
+    $begins = [regex]::Matches($Verification, '-----BEGIN CERTIFICATE-----').Count
+    $ends = [regex]::Matches($Verification, '-----END CERTIFICATE-----').Count
+    if ($certificates.Count -eq 0 -or $certificates.Count -ne $begins -or $certificates.Count -ne $ends) {
+        throw 'Expected complete APK signing certificates in apksigner output.'
+    }
+    $fingerprints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($match in $certificates) {
+        try {
+            $encoded = [Convert]::FromBase64String($match.Groups[1].Value)
+        } catch [FormatException] {
+            throw 'Invalid APK signing certificate encoding.'
+        }
+        try {
+            $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($encoded)
+        } catch [Security.Cryptography.CryptographicException] {
+            throw 'Invalid APK signing certificate.'
+        }
+        try {
+            $null = $fingerprints.Add([Convert]::ToHexString(
+                [Security.Cryptography.SHA256]::HashData($certificate.RawData)))
+        } finally {
+            $certificate.Dispose()
+        }
+    }
+    if ($fingerprints.Count -ne 1) { throw 'Expected exactly one unique APK signing certificate.' }
+    @($fingerprints)[0]
+}
+
 function Find-AndroidTool([string] $Name) {
     $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { $env:ANDROID_SDK_ROOT }
     if ([string]::IsNullOrWhiteSpace($sdk)) { throw 'Set ANDROID_HOME or ANDROID_SDK_ROOT for signature verification.' }
@@ -77,11 +114,9 @@ if ($Mode -eq 'Prepare') {
     }
     if ('Android' -in $targets) {
         $apk = Join-Path $Path 'fta-garmin-companion.apk'
-        $verification = (& (Find-AndroidTool 'apksigner.bat') verify --verbose --print-certs $apk 2>&1 | Out-String)
+        $verification = (& (Find-AndroidTool 'apksigner.bat') verify --verbose --print-certs-pem $apk 2>&1 | Out-String)
         if ($LASTEXITCODE -ne 0) { throw 'Release APK signature verification failed.' }
-        $certificates = [regex]::Matches($verification, 'Signer #[0-9]+ certificate SHA-256 digest: ([a-fA-F0-9]+)')
-        if ($certificates.Count -ne 1) { throw 'Expected exactly one APK signing certificate.' }
-        $fingerprint = Normalize-Fingerprint $certificates[0].Groups[1].Value
+        $fingerprint = Read-ApkSigningFingerprint $verification
         if ($AndroidCertificate -and $fingerprint -ne (Normalize-Fingerprint $AndroidCertificate)) {
             throw 'The APK signing certificate differs from the expected release certificate.'
         }

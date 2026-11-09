@@ -219,14 +219,18 @@ function Assert-PublishedRelease([long] $ReleaseId) {
 try {
     Ensure-Tag $Commit
     if ($null -eq $release) {
-        $notesFile = Join-Path $temporary 'reviewed-notes.txt'
-        [IO.File]::WriteAllText($notesFile, $ReleaseNotes, [Text.UTF8Encoding]::new($false))
         Assert-TagCommit $run.head_sha
-        & gh release create $Tag --repo $Repository --verify-tag --draft `
-            "--title=$ReleaseTitle" --notes-file $notesFile
-        if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed; no release was published.' }
-        $release = Find-Release
-        if ($null -eq $release -or -not $release.draft) { throw 'The created release draft was not found.' }
+        $release = Invoke-GitHubApi "repos/$Repository/releases" -Method POST -Body @{
+            tag_name = $Tag
+            name = $ReleaseTitle
+            body = $ReleaseNotes
+            draft = $true
+            prerelease = $false
+        }
+        if ($null -eq $release -or -not $release.draft -or
+            -not (Test-ExactString $release.tag_name $Tag) -or [string] $release.id -notmatch '^[1-9][0-9]*$') {
+            throw 'The created release draft did not match the requested tag.'
+        }
         Assert-CompatibleRelease $release
     }
     $assets = Read-Assets $release.id

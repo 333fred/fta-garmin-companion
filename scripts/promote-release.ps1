@@ -26,19 +26,7 @@ function Read-GitHub([string] $Endpoint) {
 }
 
 function Get-TagCommit {
-    $references = Read-GitHub "repos/$Repository/git/matching-refs/tags/$Tag"
-    $matches = @($references | Where-Object { Test-ExactString $_.ref "refs/tags/$Tag" })
-    if ($matches.Count -eq 0) { return $null }
-    if ($matches.Count -ne 1) { throw 'The release tag is ambiguous.' }
-    $tagObject = $matches[0].object
-    $seenTags = @{}
-    while ($tagObject.type -eq 'tag') {
-        if ($seenTags.ContainsKey($tagObject.sha)) { throw 'The release tag contains a reference cycle.' }
-        $seenTags[$tagObject.sha] = $true
-        $tagObject = (Read-GitHub "repos/$Repository/git/tags/$($tagObject.sha)").object
-    }
-    if ($tagObject.type -ne 'commit') { throw 'The release tag does not point to a commit.' }
-    $tagObject.sha
+    Get-GitHubTagCommit $Repository $Tag
 }
 
 function Assert-TagCommit([string] $ExpectedCommit) {

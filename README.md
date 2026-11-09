@@ -33,3 +33,5 @@ The Android APK is written to `companion\app\build\outputs\apk\debug\` and
 the watch PRGs to `watch\bin\`. Use `.\build.ps1 -Target Android` or
 `.\build.ps1 -Target Watch` to build either app separately. The `-GarminSdk` and
 `-GarminDeveloperKey` parameters override the selected SDK and local key.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor guidance.

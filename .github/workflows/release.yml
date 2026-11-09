@@ -1,0 +1,95 @@
+name: Promote release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full commit SHA of the main-branch release candidate
+        required: true
+        type: string
+      title:
+        description: Exact reviewed release title
+        required: true
+        type: string
+      notes:
+        description: Exact reviewed release notes
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-promotion
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      version-code: ${{ steps.release.outputs.version-code }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - name: Require exact main ref
+        shell: pwsh
+        run: |
+          if (-not [string]::Equals($env:GITHUB_REF, 'refs/heads/main', [StringComparison]::Ordinal)) {
+            throw 'Release promotion requires the main branch.'
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate source and select candidate
+        id: source
+        shell: pwsh
+        run: |
+          .\scripts\select-release-candidate.ps1 -Commit $env:RELEASE_COMMIT
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          path: build\candidate
+          digest-mismatch: error
+      - name: Verify candidate and publish reviewed release
+        id: release
+        shell: pwsh
+        env:
+          BUILD_RUN_ID: ${{ steps.source.outputs.run-id }}
+          BUILD_RUN_ATTEMPT: ${{ steps.source.outputs.run-attempt }}
+          RELEASE_TITLE: ${{ inputs.title }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+        run: |
+          .\scripts\promote-release.ps1 -Publish -RunId $env:BUILD_RUN_ID `
+            -RunAttempt $env:BUILD_RUN_ATTEMPT -Commit $env:RELEASE_COMMIT `
+            -Path (Join-Path $env:GITHUB_WORKSPACE 'build\candidate')
+
+  version-pr:
+    name: Open next-version PR
+    needs: publish
+    runs-on: windows-2025
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ needs.publish.outputs.version }}
+      RELEASE_VERSION_CODE: ${{ needs.publish.outputs.version-code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Create version bump PR
+        shell: pwsh
+        run: |
+          .\scripts\create-version-pr.ps1 -Version $env:RELEASE_VERSION `
+            -VersionCode $env:RELEASE_VERSION_CODE

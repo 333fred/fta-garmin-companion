@@ -68,18 +68,17 @@ jobs:
           }
 
   official:
-    name: ${{ github.ref == 'refs/heads/official-build-testing' && 'Official environment smoke test' || 'Official release candidate' }}
+    name: Official release candidate
     needs: [android, watch]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/official-build-testing')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-2025
     environment: 'Official Build'
     steps:
-      - name: Require exact build ref
+      - name: Require exact main ref
         shell: pwsh
         run: |
-          if (-not [string]::Equals($env:GITHUB_REF, 'refs/heads/main', [StringComparison]::Ordinal) -and
-              -not [string]::Equals($env:GITHUB_REF, 'refs/heads/official-build-testing', [StringComparison]::Ordinal)) {
-            throw 'Official builds require the main or designated smoke-test branch.'
+          if (-not [string]::Equals($env:GITHUB_REF, 'refs/heads/main', [StringComparison]::Ordinal)) {
+            throw 'Official builds require the main branch.'
           }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -130,6 +129,6 @@ jobs:
           }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: ${{ github.ref_name == 'official-build-testing' && 'smoke' || 'official' }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          name: official-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: build\official
           if-no-files-found: error

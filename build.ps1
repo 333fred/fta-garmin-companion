@@ -58,8 +58,6 @@ if ($devices.Count -eq 0 -or @($devices | Where-Object { [string]::IsNullOrWhite
 }
 
 $release = $Configuration -eq 'Release'
-$officialRef = [string]::Equals($env:GITHUB_REF, 'refs/heads/main', [StringComparison]::Ordinal)
-$smokeRef = [string]::Equals($env:GITHUB_REF, 'refs/heads/official-build-testing', [StringComparison]::Ordinal)
 if ($Official -and (-not $release -or $Target -ne 'All')) {
     throw 'An official build requires -Configuration Release -Target All.'
 }
@@ -70,9 +68,10 @@ if ($Official) {
             throw "Official build environment variable is missing: $name"
         }
     }
-    if ($env:GITHUB_EVENT_NAME -cne 'push' -or (-not $officialRef -and -not $smokeRef) -or
+    if ($env:GITHUB_EVENT_NAME -cne 'push' -or
+        -not [string]::Equals($env:GITHUB_REF, 'refs/heads/main', [StringComparison]::Ordinal) -or
         -not $env:GITHUB_WORKFLOW_REF.StartsWith("$env:GITHUB_REPOSITORY/.github/workflows/build.yml@", [StringComparison]::Ordinal)) {
-        throw 'Official builds must originate from the main or designated smoke-test push build workflow.'
+        throw 'Official builds must originate from the main-branch push build workflow.'
     }
     & git -C $PSScriptRoot diff --quiet
     if ($LASTEXITCODE -ne 0) { throw 'Official build sources have uncommitted changes.' }
@@ -249,7 +248,7 @@ if ($release) {
     }
     $info = [ordered]@{
         schemaVersion = 1
-        official = $Official.IsPresent -and $officialRef
+        official = $Official.IsPresent
         configuration = 'Release'
         repository = if ($Official) { $env:GITHUB_REPOSITORY } else { $null }
         workflow = if ($Official) { '.github/workflows/build.yml' } else { $null }

@@ -19,11 +19,11 @@ if ([string]::IsNullOrWhiteSpace($Repository) -or $Repository -ne $env:GITHUB_RE
     throw 'The version PR requires the manually dispatched main-branch release workflow.'
 }
 $components = $Version.Split('.')
-$patch = 0
-if (-not [int]::TryParse($components[2], [ref] $patch) -or $patch -eq [int]::MaxValue) {
-    throw 'The released patch version cannot be incremented.'
+$minor = 0
+if (-not [int]::TryParse($components[1], [ref] $minor) -or $minor -eq [int]::MaxValue) {
+    throw 'The released minor version cannot be incremented.'
 }
-$nextVersion = "$($components[0]).$($components[1]).$($patch + 1)"
+$nextVersion = "$($components[0]).$($minor + 1).0"
 $nextCode = $VersionCode + 1
 $tag = "v$Version"
 $branch = "automation/version-after-$tag"

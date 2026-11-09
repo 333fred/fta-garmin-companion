@@ -10,6 +10,25 @@ configure<ApplicationExtension> {
     namespace = "xyz.silberberg.ftagarminconnect"
     compileSdk = 36
 
+    val releaseSigningRequested =
+        providers.gradleProperty("ftaReleaseSigning").orNull?.toBooleanStrict() ?: false
+    val releaseSigning = if (releaseSigningRequested) {
+        fun signingInput(name: String): String =
+            providers.environmentVariable(name).orNull?.takeIf { it.isNotBlank() }
+                ?: error("Missing release signing environment variable: $name")
+
+        signingConfigs.create("official") {
+            val keystore = file(signingInput("ANDROID_RELEASE_KEYSTORE_PATH"))
+            require(keystore.isFile) { "Android release keystore was not found." }
+            storeFile = keystore
+            storePassword = signingInput("ANDROID_RELEASE_KEYSTORE_PASSWORD")
+            keyAlias = signingInput("ANDROID_RELEASE_KEY_ALIAS")
+            keyPassword = signingInput("ANDROID_RELEASE_KEY_PASSWORD")
+        }
+    } else {
+        null
+    }
+
     defaultConfig {
         applicationId = "xyz.silberberg.ftagarminconnect"
         minSdk = 26
@@ -25,6 +44,9 @@ configure<ApplicationExtension> {
 
     buildTypes {
         release {
+            if (releaseSigning != null) {
+                signingConfig = releaseSigning
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

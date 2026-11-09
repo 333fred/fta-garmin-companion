@@ -59,7 +59,7 @@ the apps.
 
 Open pull requests against `main` and describe the change and the checks you
 ran. CI builds and lints Android and runs its unit tests on pull requests. The
-watch build runs on branch pushes or manual dispatches, not on pull requests.
+watch build runs on pushes to `main` or manual dispatches, not on pull requests.
 
 ## Releases
 

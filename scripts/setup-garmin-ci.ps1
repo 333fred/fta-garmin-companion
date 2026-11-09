@@ -12,7 +12,9 @@ foreach ($name in @('RUNNER_TEMP', 'GITHUB_WORKSPACE', 'GITHUB_ENV', 'GARMIN_USE
 }
 $archive = Join-Path $env:RUNNER_TEMP 'connect-iq-sdk-manager.tar.gz'
 $url = 'https://github.com/lindell/connect-iq-sdk-manager-cli/releases/download/v0.8.4/connect-iq-sdk-manager-cli_0.8.4_Windows_x86_64.tar.gz'
-Invoke-WebRequest -Uri $url -OutFile $archive
+if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+    Invoke-WebRequest -Uri $url -OutFile $archive
+}
 $expected = '989cb7e037330213ada7d77a977adac7dc05468465998c503684e2abc9f790bf'
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
     throw 'Connect IQ SDK manager checksum mismatch.'

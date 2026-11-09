@@ -44,17 +44,27 @@ publish, merge, or post written content without the user's explicit approval.
 
 ## Review and publish
 
-Have the user run the helper in their own PowerShell terminal:
+Run the helper in preview mode:
 
 ```powershell
-.\scripts\prepare-release.ps1 -Commit '<full-commit-sha>' -Title '<release-title>'
+.\scripts\prepare-release.ps1 -Commit '<full-commit-sha>' -Title '<release-title>' -Preview
 ```
 
 Add `-PreviousTag '<tag>'` only if the user requested a specific starting tag.
-The helper generates GitHub release notes, displays the exact title and body,
-and asks the user to type `PUBLISH` before dispatch. The user must review and
-confirm that text themselves; never supply the confirmation automatically.
-If the user declines or wants edits, stop rather than dispatching unapproved text.
+Show the user the exact title and complete generated notes, plus the title and
+body of the automatic version-bump PR from `scripts\create-version-pr.ps1` on
+`origin/main`. Ask for explicit approval to publish the release and create
+that PR. If they decline or want edits, stop rather than dispatching unapproved
+text.
+
+After approval, fetch `origin/main` again and check that the version-bump PR
+wording still matches what the user approved. Then run the helper with the same
+arguments, replacing `-Preview` with `-ApprovedPreviewHash '<preview-sha256>'`
+using the hash from the preview. The helper dispatches only if the repository,
+commit, tag, title, and notes still match the approved preview. If the PR
+wording or preview details changed, show the revised text and obtain approval
+again. Never run the approved mode without the user's explicit approval of the
+exact text.
 
 The workflow creates the matching `v<version>` tag and publishes the selected
 signed artifacts without rebuilding. Do not create or move the tag yourself.

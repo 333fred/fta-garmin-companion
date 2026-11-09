@@ -1,4 +1,4 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Interactive')]
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^[a-fA-F0-9]{40}$')]
@@ -6,7 +6,12 @@ param(
     [Parameter(Mandatory)]
     [string] $Title,
     [string] $PreviousTag,
-    [string] $Repository = $env:GITHUB_REPOSITORY
+    [string] $Repository = $env:GITHUB_REPOSITORY,
+    [Parameter(Mandatory, ParameterSetName = 'Preview')]
+    [switch] $Preview,
+    [Parameter(Mandatory, ParameterSetName = 'Approved')]
+    [ValidatePattern('^[a-fA-F0-9]{64}$')]
+    [string] $ApprovedPreviewHash
 )
 
 Set-StrictMode -Version Latest
@@ -61,10 +66,34 @@ $inputs = @{ commit = $Commit; title = $Title; notes = $generated.body }
 $json = ConvertTo-Json -InputObject $inputs -Depth 4 -Compress
 if ($json.Length -gt 65535) { throw 'Generated notes exceed the GitHub workflow input limit.' }
 Write-Host "`nDispatching will publish this release and then open a version-bump PR."
-$approval = Read-Host 'Type PUBLISH to approve this exact title and text, or anything else to cancel'
-if (-not (Test-ExactString $approval 'PUBLISH')) {
+
+$approvalData = [ordered]@{
+    repository = $Repository
+    commit = $Commit
+    tag = $tag
+    title = $Title
+    notes = $generated.body
+}
+$approvalJson = ConvertTo-Json -InputObject $approvalData -Depth 4 -Compress
+$previewHash = [Convert]::ToHexString(
+    [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($approvalJson))
+).ToLowerInvariant()
+
+if ($PSCmdlet.ParameterSetName -eq 'Preview') {
+    Write-Host "Preview SHA-256: $previewHash"
     Write-Host 'Release promotion was not dispatched.'
     return
+}
+if ($PSCmdlet.ParameterSetName -eq 'Approved') {
+    if (-not (Test-ExactString $previewHash $ApprovedPreviewHash.ToLowerInvariant())) {
+        throw 'Release details changed since the approved preview; review a new preview before dispatching.'
+    }
+} else {
+    $approval = Read-Host 'Type PUBLISH to approve this exact title and text, or anything else to cancel'
+    if (-not (Test-ExactString $approval 'PUBLISH')) {
+        Write-Host 'Release promotion was not dispatched.'
+        return
+    }
 }
 $result = ($json | & gh workflow run 'release.yml' --repo $Repository --ref main --json 2>&1 | Out-String)
 if ($LASTEXITCODE -ne 0) { throw "Unable to dispatch release promotion.`n$result" }
